@@ -177,7 +177,101 @@ fn validate_block(block: &Block, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
 
-        // Markdown, Tasks, Summary, Columns, Unknown — no required-field validation
+        Block::Cta {
+            label,
+            href,
+            span,
+            ..
+        } => {
+            if label.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: "Cta block is missing required attribute: label".into(),
+                    span: Some(*span),
+                    code: Some("V090".into()),
+                });
+            }
+            if href.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: "Cta block is missing required attribute: href".into(),
+                    span: Some(*span),
+                    code: Some("V091".into()),
+                });
+            }
+        }
+
+        Block::HeroImage { src, span, .. } => {
+            if src.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: "HeroImage block is missing required attribute: src".into(),
+                    span: Some(*span),
+                    code: Some("V100".into()),
+                });
+            }
+        }
+
+        Block::Testimonial {
+            content, span, ..
+        } => {
+            if content.trim().is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "Testimonial block has empty content".into(),
+                    span: Some(*span),
+                    code: Some("V110".into()),
+                });
+            }
+        }
+
+        Block::Faq { items, span, .. } => {
+            if items.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "Faq block has no question/answer items".into(),
+                    span: Some(*span),
+                    code: Some("V120".into()),
+                });
+            }
+        }
+
+        Block::PricingTable {
+            headers,
+            rows,
+            span,
+            ..
+        } => {
+            if headers.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "PricingTable block has no headers (tier names)".into(),
+                    span: Some(*span),
+                    code: Some("V130".into()),
+                });
+            }
+            if !headers.is_empty() && rows.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "PricingTable block has headers but zero feature rows".into(),
+                    span: Some(*span),
+                    code: Some("V131".into()),
+                });
+            }
+        }
+
+        Block::Page { route, span, .. } => {
+            if route.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: "Page block is missing required attribute: route".into(),
+                    span: Some(*span),
+                    code: Some("V140".into()),
+                });
+            }
+        }
+
+        // Markdown, Tasks, Summary, Columns, Style, Site, Unknown — no required-field validation
         _ => {}
     }
 }

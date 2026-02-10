@@ -166,6 +166,94 @@ fn render_block(block: &Block) -> String {
             lines.join("\n")
         }
 
+        Block::Cta {
+            label, href, ..
+        } => {
+            // Degrades to a markdown link
+            format!("[{label}]({href})")
+        }
+
+        Block::HeroImage {
+            src, alt, ..
+        } => {
+            let alt_text = alt.as_deref().unwrap_or("Hero image");
+            format!("![{alt_text}]({src})")
+        }
+
+        Block::Testimonial {
+            content,
+            author,
+            role,
+            company,
+            ..
+        } => {
+            let mut lines: Vec<String> = content.lines().map(|l| format!("> {l}")).collect();
+            let details: Vec<&str> = [author.as_deref(), role.as_deref(), company.as_deref()]
+                .iter()
+                .filter_map(|v| *v)
+                .collect();
+            if !details.is_empty() {
+                lines.push(format!(">\n> \u{2014} {}", details.join(", ")));
+            }
+            lines.join("\n")
+        }
+
+        Block::Style { .. } => {
+            // Style blocks are invisible in markdown degradation
+            String::new()
+        }
+
+        Block::Faq { items, .. } => {
+            // Degrades to headings + paragraphs
+            let parts: Vec<String> = items
+                .iter()
+                .map(|item| format!("### {}\n\n{}", item.question, item.answer))
+                .collect();
+            parts.join("\n\n")
+        }
+
+        Block::PricingTable {
+            headers, rows, ..
+        } => {
+            // Degrades to a standard markdown table (same as Data)
+            if headers.is_empty() {
+                return String::new();
+            }
+            let mut lines = Vec::new();
+            lines.push(format!("| {} |", headers.join(" | ")));
+            let sep: Vec<&str> = headers.iter().map(|_| "---").collect();
+            lines.push(format!("| {} |", sep.join(" | ")));
+            for row in rows {
+                lines.push(format!("| {} |", row.join(" | ")));
+            }
+            lines.join("\n")
+        }
+
+        Block::Site { domain, properties, .. } => {
+            // Degrades to a YAML-like config block
+            let mut lines = vec!["**Site Configuration**".to_string()];
+            if let Some(d) = domain {
+                lines.push(format!("- domain: {d}"));
+            }
+            for p in properties {
+                lines.push(format!("- {}: {}", p.key, p.value));
+            }
+            lines.join("\n")
+        }
+
+        Block::Page {
+            title,
+            content,
+            ..
+        } => {
+            // Degrades to a heading + raw content
+            if let Some(t) = title {
+                format!("## {t}\n\n{content}")
+            } else {
+                content.clone()
+            }
+        }
+
         Block::Unknown {
             name,
             content,
@@ -341,6 +429,140 @@ mod tests {
         let md = to_markdown(&doc);
         assert!(md.contains("![Diagram](diagram.png)"));
         assert!(md.contains("*Architecture*"));
+    }
+
+    // -- Web blocks ------------------------------------------------
+
+    #[test]
+    fn md_cta() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Sign Up".into(),
+            href: "/signup".into(),
+            primary: true,
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert_eq!(md, "[Sign Up](/signup)");
+    }
+
+    #[test]
+    fn md_hero_image() {
+        let doc = doc_with(vec![Block::HeroImage {
+            src: "hero.png".into(),
+            alt: Some("Product shot".into()),
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert_eq!(md, "![Product shot](hero.png)");
+    }
+
+    #[test]
+    fn md_testimonial() {
+        let doc = doc_with(vec![Block::Testimonial {
+            content: "Great product!".into(),
+            author: Some("Jane".into()),
+            role: Some("Engineer".into()),
+            company: None,
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("> Great product!"));
+        assert!(md.contains("\u{2014} Jane, Engineer"));
+    }
+
+    #[test]
+    fn md_style_invisible() {
+        let doc = doc_with(vec![Block::Style {
+            properties: vec![crate::types::StyleProperty {
+                key: "accent".into(),
+                value: "blue".into(),
+            }],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.is_empty());
+    }
+
+    #[test]
+    fn md_faq() {
+        let doc = doc_with(vec![Block::Faq {
+            items: vec![
+                crate::types::FaqItem {
+                    question: "Is it free?".into(),
+                    answer: "Yes.".into(),
+                },
+                crate::types::FaqItem {
+                    question: "Can I export?".into(),
+                    answer: "PDF and HTML.".into(),
+                },
+            ],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("### Is it free?"));
+        assert!(md.contains("Yes."));
+        assert!(md.contains("### Can I export?"));
+        assert!(md.contains("PDF and HTML."));
+    }
+
+    #[test]
+    fn md_pricing_table() {
+        let doc = doc_with(vec![Block::PricingTable {
+            headers: vec!["".into(), "Free".into(), "Pro".into()],
+            rows: vec![vec!["Price".into(), "$0".into(), "$9/mo".into()]],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("Free | Pro"));
+        assert!(md.contains("| --- | --- | --- |"));
+        assert!(md.contains("| Price | $0 | $9/mo |"));
+    }
+
+    #[test]
+    fn md_site() {
+        let doc = doc_with(vec![Block::Site {
+            domain: Some("example.com".into()),
+            properties: vec![
+                crate::types::StyleProperty { key: "name".into(), value: "Test".into() },
+            ],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("**Site Configuration**"));
+        assert!(md.contains("domain: example.com"));
+        assert!(md.contains("name: Test"));
+    }
+
+    #[test]
+    fn md_page_with_title() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/".into(),
+            layout: None,
+            title: Some("Home".into()),
+            sidebar: false,
+            content: "Welcome to our site.".into(),
+            children: vec![],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("## Home"));
+        assert!(md.contains("Welcome to our site."));
+    }
+
+    #[test]
+    fn md_page_no_title() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/about".into(),
+            layout: None,
+            title: None,
+            sidebar: false,
+            content: "# About Us\n\nWe build things.".into(),
+            children: vec![],
+            span: span(),
+        }]);
+        let md = to_markdown(&doc);
+        assert!(md.contains("# About Us"));
+        assert!(md.contains("We build things."));
     }
 
     #[test]

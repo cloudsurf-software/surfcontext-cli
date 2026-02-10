@@ -262,6 +262,59 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .surfdoc-quote blockquote { border: none; padding: 0; margin: 0; background: none; font-size: 1.1rem; font-style: italic; color: var(--text-dim); line-height: 1.6; }
 .surfdoc-quote .attribution { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); font-style: normal; }
 .surfdoc-quote .attribution::before { content: "— "; }
+
+/* CTA buttons */
+.surfdoc-cta { display: inline-block; padding: 0.625rem 1.5rem; margin: 0.5rem 0.5rem 0.5rem 0; border-radius: 8px; font-weight: 600; font-size: 0.95rem; text-decoration: none; transition: all 0.15s; cursor: pointer; }
+.surfdoc-cta-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+.surfdoc-cta-primary:hover { background: #2563eb; text-decoration: none; }
+.surfdoc-cta-secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+.surfdoc-cta-secondary:hover { background: var(--bg-hover); text-decoration: none; }
+
+/* Hero image */
+.surfdoc-hero-image { margin: 2rem 0; text-align: center; }
+.surfdoc-hero-image img { max-width: 100%; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); }
+
+/* Testimonials */
+.surfdoc-testimonial { padding: 1.25rem 1.5rem; margin: 1rem 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 12px; position: relative; }
+.surfdoc-testimonial blockquote { border: none; background: none; padding: 0; margin: 0 0 0.75rem; font-size: 1rem; font-style: italic; color: var(--text-dim); line-height: 1.6; }
+.surfdoc-testimonial .author { font-weight: 600; color: var(--text); font-size: 0.9rem; }
+.surfdoc-testimonial .role { color: var(--text-muted); font-size: 0.8rem; }
+
+/* Style blocks — invisible, metadata only */
+.surfdoc-style { display: none; }
+
+/* FAQ accordion */
+.surfdoc-faq { margin: 1rem 0; }
+.surfdoc-faq details { border: 1px solid var(--border-subtle); border-radius: 8px; margin: 0.5rem 0; overflow: hidden; }
+.surfdoc-faq summary { padding: 0.75rem 1rem; font-weight: 600; cursor: pointer; background: var(--bg-card); color: var(--text); font-size: 0.95rem; }
+.surfdoc-faq summary:hover { background: var(--bg-hover); }
+.surfdoc-faq .faq-answer { padding: 0.75rem 1rem; color: var(--text-dim); line-height: 1.6; border-top: 1px solid var(--border-subtle); }
+
+/* Pricing table */
+.surfdoc-pricing { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.875rem; border: 1px solid var(--border-subtle); border-radius: 8px; overflow: hidden; }
+.surfdoc-pricing thead { background: var(--bg-card); }
+.surfdoc-pricing th { text-align: center; padding: 0.75rem; font-weight: 600; color: var(--text); border-bottom: 2px solid var(--border); font-size: 0.95rem; }
+.surfdoc-pricing th:first-child { text-align: left; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.surfdoc-pricing td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-subtle); text-align: center; }
+.surfdoc-pricing td:first-child { text-align: left; font-weight: 500; color: var(--text-dim); }
+.surfdoc-pricing tr:hover td { background: rgba(255,255,255,0.02); }
+.surfdoc-pricing tr:last-child td { border-bottom: none; }
+
+/* Site config — invisible, metadata only */
+.surfdoc-site { display: none; }
+
+/* Page sections */
+.surfdoc-page { margin: 2rem 0; padding: 2rem 0; border-top: 2px solid var(--border-subtle); }
+.surfdoc-page[data-layout="hero"] { text-align: center; padding: 4rem 0; }
+.surfdoc-page[data-layout="hero"] h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+.surfdoc-page[data-layout="hero"] p { font-size: 1.15rem; color: var(--text-dim); max-width: 36rem; margin: 0 auto 1.5rem; }
+.surfdoc-page[data-layout="hero"] .surfdoc-cta { margin: 0.5rem; }
+.surfdoc-page[data-layout="cards"] { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+.surfdoc-page[data-layout="split"] { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; }
+@media (max-width: 640px) {
+    .surfdoc-page[data-layout="split"] { grid-template-columns: 1fr; }
+    .surfdoc-page[data-layout="hero"] h1 { font-size: 1.75rem; }
+}
 "#;
 
 /// Escape HTML special characters to prevent XSS.
@@ -487,6 +540,141 @@ fn render_block(block: &Block) -> String {
                 ));
             }
             html.push_str("</div>");
+            html
+        }
+
+        Block::Cta {
+            label,
+            href,
+            primary,
+            ..
+        } => {
+            let class = if *primary { "surfdoc-cta surfdoc-cta-primary" } else { "surfdoc-cta surfdoc-cta-secondary" };
+            format!(
+                "<a class=\"{}\" href=\"{}\">{}</a>",
+                class,
+                escape_html(href),
+                escape_html(label),
+            )
+        }
+
+        Block::HeroImage { src, alt, .. } => {
+            let alt_attr = alt.as_deref().unwrap_or("");
+            format!(
+                "<div class=\"surfdoc-hero-image\"><img src=\"{}\" alt=\"{}\" /></div>",
+                escape_html(src),
+                escape_html(alt_attr),
+            )
+        }
+
+        Block::Testimonial {
+            content,
+            author,
+            role,
+            company,
+            ..
+        } => {
+            let mut html = String::from("<div class=\"surfdoc-testimonial\"><blockquote>");
+            html.push_str(&escape_html(content));
+            html.push_str("</blockquote>");
+            if author.is_some() || role.is_some() || company.is_some() {
+                html.push_str("<div class=\"author\">");
+                if let Some(a) = author {
+                    html.push_str(&escape_html(a));
+                }
+                let details: Vec<&str> = [role.as_deref(), company.as_deref()]
+                    .iter()
+                    .filter_map(|v| *v)
+                    .collect();
+                if !details.is_empty() {
+                    html.push_str(&format!(
+                        " <span class=\"role\">{}</span>",
+                        escape_html(&details.join(", "))
+                    ));
+                }
+                html.push_str("</div>");
+            }
+            html.push_str("</div>");
+            html
+        }
+
+        Block::Style { properties, .. } => {
+            // Style blocks are metadata — rendered as a hidden data element
+            let pairs: Vec<String> = properties
+                .iter()
+                .map(|p| format!("{}={}", escape_html(&p.key), escape_html(&p.value)))
+                .collect();
+            format!(
+                "<div class=\"surfdoc-style\" data-properties=\"{}\"></div>",
+                escape_html(&pairs.join(";"))
+            )
+        }
+
+        Block::Faq { items, .. } => {
+            let mut html = String::from("<div class=\"surfdoc-faq\">");
+            for item in items {
+                html.push_str(&format!(
+                    "<details><summary>{}</summary><div class=\"faq-answer\">{}</div></details>",
+                    escape_html(&item.question),
+                    escape_html(&item.answer),
+                ));
+            }
+            html.push_str("</div>");
+            html
+        }
+
+        Block::PricingTable {
+            headers, rows, ..
+        } => {
+            let mut html = String::from("<table class=\"surfdoc-pricing\">");
+            if !headers.is_empty() {
+                html.push_str("<thead><tr>");
+                for h in headers {
+                    html.push_str(&format!("<th>{}</th>", escape_html(h)));
+                }
+                html.push_str("</tr></thead>");
+            }
+            html.push_str("<tbody>");
+            for row in rows {
+                html.push_str("<tr>");
+                for cell in row {
+                    html.push_str(&format!("<td>{}</td>", escape_html(cell)));
+                }
+                html.push_str("</tr>");
+            }
+            html.push_str("</tbody></table>");
+            html
+        }
+
+        Block::Site { properties, domain, .. } => {
+            // Site config is metadata — hidden element with data attributes
+            let domain_attr = match domain {
+                Some(d) => format!(" data-domain=\"{}\"", escape_html(d)),
+                None => String::new(),
+            };
+            let pairs: Vec<String> = properties
+                .iter()
+                .map(|p| format!("{}={}", escape_html(&p.key), escape_html(&p.value)))
+                .collect();
+            format!(
+                "<div class=\"surfdoc-site\"{} data-properties=\"{}\"></div>",
+                domain_attr,
+                escape_html(&pairs.join(";")),
+            )
+        }
+
+        Block::Page {
+            layout, children, ..
+        } => {
+            let layout_attr = match layout {
+                Some(l) => format!(" data-layout=\"{}\"", escape_html(l)),
+                None => String::new(),
+            };
+            let mut html = format!("<section class=\"surfdoc-page\"{layout_attr}>");
+            for child in children {
+                html.push_str(&render_block(child));
+            }
+            html.push_str("</section>");
             html
         }
 
@@ -755,6 +943,227 @@ mod tests {
         assert!(html.contains("class=\"surfdoc-quote\""));
         assert!(html.contains("Anonymous wisdom."));
         assert!(!html.contains("attribution"));
+    }
+
+    // -- Web blocks (cta, hero-image, testimonial, style) ---------------
+
+    #[test]
+    fn html_cta_primary() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Get Started".into(),
+            href: "/signup".into(),
+            primary: true,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-cta surfdoc-cta-primary\""));
+        assert!(html.contains("href=\"/signup\""));
+        assert!(html.contains("Get Started"));
+    }
+
+    #[test]
+    fn html_cta_secondary() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Learn More".into(),
+            href: "https://example.com".into(),
+            primary: false,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("surfdoc-cta-secondary"));
+        assert!(html.contains("Learn More"));
+    }
+
+    #[test]
+    fn html_hero_image() {
+        let doc = doc_with(vec![Block::HeroImage {
+            src: "screenshot.png".into(),
+            alt: Some("App screenshot".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-hero-image\""));
+        assert!(html.contains("src=\"screenshot.png\""));
+        assert!(html.contains("alt=\"App screenshot\""));
+    }
+
+    #[test]
+    fn html_testimonial() {
+        let doc = doc_with(vec![Block::Testimonial {
+            content: "Amazing product!".into(),
+            author: Some("Jane Dev".into()),
+            role: Some("Engineer".into()),
+            company: Some("Acme".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-testimonial\""));
+        assert!(html.contains("Amazing product!"));
+        assert!(html.contains("Jane Dev"));
+        assert!(html.contains("Engineer, Acme"));
+    }
+
+    #[test]
+    fn html_testimonial_anonymous() {
+        let doc = doc_with(vec![Block::Testimonial {
+            content: "Great tool.".into(),
+            author: None,
+            role: None,
+            company: None,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("Great tool."));
+        assert!(!html.contains("class=\"author\""));
+    }
+
+    #[test]
+    fn html_style_hidden() {
+        let doc = doc_with(vec![Block::Style {
+            properties: vec![
+                crate::types::StyleProperty { key: "accent".into(), value: "#6366f1".into() },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-style\""));
+    }
+
+    #[test]
+    fn html_cta_escapes_xss() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "<script>alert('xss')</script>".into(),
+            href: "javascript:alert(1)".into(),
+            primary: true,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn html_faq() {
+        let doc = doc_with(vec![Block::Faq {
+            items: vec![
+                crate::types::FaqItem {
+                    question: "Is it free?".into(),
+                    answer: "Yes, the free tier is forever.".into(),
+                },
+                crate::types::FaqItem {
+                    question: "Can I self-host?".into(),
+                    answer: "Docker image available.".into(),
+                },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-faq\""));
+        assert!(html.contains("<summary>Is it free?</summary>"));
+        assert!(html.contains("<summary>Can I self-host?</summary>"));
+        assert!(html.contains("class=\"faq-answer\""));
+        assert!(html.contains("Yes, the free tier is forever."));
+    }
+
+    #[test]
+    fn html_pricing_table() {
+        let doc = doc_with(vec![Block::PricingTable {
+            headers: vec!["".into(), "Free".into(), "Pro".into()],
+            rows: vec![
+                vec!["Price".into(), "$0".into(), "$9/mo".into()],
+                vec!["Storage".into(), "1GB".into(), "100GB".into()],
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-pricing\""));
+        assert!(html.contains("<th>Free</th>"));
+        assert!(html.contains("<th>Pro</th>"));
+        assert!(html.contains("<td>$9/mo</td>"));
+    }
+
+    #[test]
+    fn html_faq_escapes_xss() {
+        let doc = doc_with(vec![Block::Faq {
+            items: vec![crate::types::FaqItem {
+                question: "<script>alert('q')</script>".into(),
+                answer: "<img onerror=alert(1)>".into(),
+            }],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn html_site_hidden() {
+        let doc = doc_with(vec![Block::Site {
+            domain: Some("notesurf.io".into()),
+            properties: vec![
+                crate::types::StyleProperty { key: "name".into(), value: "NoteSurf".into() },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-site\""));
+        assert!(html.contains("data-domain=\"notesurf.io\""));
+    }
+
+    #[test]
+    fn html_page_hero_layout() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/".into(),
+            layout: Some("hero".into()),
+            title: None,
+            sidebar: false,
+            content: "# Welcome".into(),
+            children: vec![
+                Block::Markdown {
+                    content: "# Welcome".into(),
+                    span: span(),
+                },
+                Block::Cta {
+                    label: "Get Started".into(),
+                    href: "/signup".into(),
+                    primary: true,
+                    span: span(),
+                },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-page\""));
+        assert!(html.contains("data-layout=\"hero\""));
+        assert!(html.contains("Get Started")); // CTA rendered
+        assert!(html.contains("surfdoc-cta")); // CTA has class
+    }
+
+    #[test]
+    fn html_page_renders_children() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/pricing".into(),
+            layout: None,
+            title: Some("Pricing".into()),
+            sidebar: false,
+            content: String::new(),
+            children: vec![
+                Block::Markdown {
+                    content: "# Pricing".into(),
+                    span: span(),
+                },
+                Block::HeroImage {
+                    src: "pricing.png".into(),
+                    alt: Some("Plans".into()),
+                    span: span(),
+                },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("<section class=\"surfdoc-page\">"));
+        assert!(html.contains("<h1>Pricing</h1>")); // Markdown rendered
+        assert!(html.contains("surfdoc-hero-image")); // Hero image rendered
     }
 
     // -- Full-page discovery mechanism ---------------------------------

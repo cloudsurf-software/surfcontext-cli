@@ -229,6 +229,158 @@ fn render_block(block: &Block) -> String {
             lines.join("\n")
         }
 
+        Block::Cta {
+            label, href, primary, ..
+        } => {
+            let badge = if *primary {
+                format!("{}", "[CTA]".blue().bold())
+            } else {
+                format!("{}", "[CTA]".dimmed())
+            };
+            format!("{badge} {} ({href})", label.bold())
+        }
+
+        Block::HeroImage { src, alt, .. } => {
+            let desc = alt.as_deref().unwrap_or("Hero image");
+            format!("{}", format!("[Hero: {desc}] ({src})").dimmed())
+        }
+
+        Block::Testimonial {
+            content,
+            author,
+            role,
+            company,
+            ..
+        } => {
+            let border = format!("{}", "\u{2502}".dimmed()); // │
+            let mut lines: Vec<String> = content
+                .lines()
+                .map(|l| format!("{border} {}", l.italic()))
+                .collect();
+            let details: Vec<&str> = [author.as_deref(), role.as_deref(), company.as_deref()]
+                .iter()
+                .filter_map(|v| *v)
+                .collect();
+            if !details.is_empty() {
+                lines.push(format!("{border} {}", format!("\u{2014} {}", details.join(", ")).dimmed()));
+            }
+            lines.join("\n")
+        }
+
+        Block::Style { properties, .. } => {
+            if properties.is_empty() {
+                format!("{}", "[Style: empty]".dimmed())
+            } else {
+                let pairs: Vec<String> = properties
+                    .iter()
+                    .map(|p| format!("  {}: {}", p.key.bold(), p.value))
+                    .collect();
+                format!("{}\n{}", "[Style]".dimmed(), pairs.join("\n"))
+            }
+        }
+
+        Block::Faq { items, .. } => {
+            let mut parts = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                let q = format!("{}", format!("Q{}: {}", i + 1, item.question).bold());
+                parts.push(format!("{q}\n  {}", item.answer));
+            }
+            parts.join("\n\n")
+        }
+
+        Block::PricingTable {
+            headers, rows, ..
+        } => {
+            // Reuse the same table rendering as Data blocks
+            if headers.is_empty() {
+                return String::new();
+            }
+
+            let label = format!("{}", "[Pricing]".bold().cyan());
+            let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+            for row in rows {
+                for (i, cell) in row.iter().enumerate() {
+                    if i < widths.len() {
+                        widths[i] = widths[i].max(cell.len());
+                    }
+                }
+            }
+
+            let separator: String = widths
+                .iter()
+                .map(|&w| "\u{2500}".repeat(w + 2))
+                .collect::<Vec<_>>()
+                .join("\u{253C}");
+
+            let header_cells: Vec<String> = headers
+                .iter()
+                .enumerate()
+                .map(|(i, h)| format!(" {:width$} ", h, width = widths[i]))
+                .collect();
+            let header_line = format!(
+                "\u{2502}{}\u{2502}",
+                header_cells.join("\u{2502}")
+            );
+
+            let mut lines = vec![
+                label,
+                format!("{}", header_line.bold()),
+                format!("\u{2502}{separator}\u{2502}"),
+            ];
+
+            for row in rows {
+                let cells: Vec<String> = row
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let w = widths.get(i).copied().unwrap_or(c.len());
+                        format!(" {:width$} ", c, width = w)
+                    })
+                    .collect();
+                lines.push(format!(
+                    "\u{2502}{}\u{2502}",
+                    cells.join("\u{2502}")
+                ));
+            }
+            lines.join("\n")
+        }
+
+        Block::Site { domain, properties, .. } => {
+            let label = format!("{}", "[Site Config]".bold().cyan());
+            let mut lines = vec![label];
+            if let Some(d) = domain {
+                lines.push(format!("  {}: {}", "domain".bold(), d));
+            }
+            for p in properties {
+                lines.push(format!("  {}: {}", p.key.bold(), p.value));
+            }
+            lines.join("\n")
+        }
+
+        Block::Page {
+            route,
+            layout,
+            children,
+            content,
+            ..
+        } => {
+            let layout_part = match layout {
+                Some(l) => format!(" layout={l}"),
+                None => String::new(),
+            };
+            let label = format!("{}", format!("[Page {route}{layout_part}]").bold().cyan());
+            if children.is_empty() {
+                if content.is_empty() {
+                    label
+                } else {
+                    format!("{label}\n{content}")
+                }
+            } else {
+                let child_output: Vec<String> = children.iter().map(render_block).collect();
+                format!("{label}\n{}", child_output.join("\n\n"))
+            }
+        }
+
         Block::Unknown {
             name, content, ..
         } => {

@@ -222,6 +222,61 @@ pub enum Block {
         cite: Option<String>,
         span: Span,
     },
+    /// Call-to-action button.
+    Cta {
+        label: String,
+        href: String,
+        primary: bool,
+        span: Span,
+    },
+    /// Hero image visual.
+    HeroImage {
+        src: String,
+        alt: Option<String>,
+        span: Span,
+    },
+    /// Customer testimonial.
+    Testimonial {
+        content: String,
+        author: Option<String>,
+        role: Option<String>,
+        company: Option<String>,
+        span: Span,
+    },
+    /// Presentation style overrides (key-value pairs).
+    Style {
+        properties: Vec<StyleProperty>,
+        span: Span,
+    },
+    /// FAQ accordion with question/answer pairs.
+    Faq {
+        items: Vec<FaqItem>,
+        span: Span,
+    },
+    /// Pricing comparison table.
+    PricingTable {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+        span: Span,
+    },
+    /// Site-level configuration (one per document).
+    Site {
+        domain: Option<String>,
+        properties: Vec<StyleProperty>,
+        span: Span,
+    },
+    /// Page/route definition — container block with child blocks.
+    Page {
+        route: String,
+        layout: Option<String>,
+        title: Option<String>,
+        sidebar: bool,
+        /// Raw content for degradation renderers.
+        content: String,
+        /// Parsed child blocks (leaf directives resolved, rest as Markdown).
+        children: Vec<Block>,
+        span: Span,
+    },
 }
 
 /// Callout/admonition type.
@@ -283,6 +338,20 @@ pub struct TabPanel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnContent {
     pub content: String,
+}
+
+/// A key-value style override within a `Style` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StyleProperty {
+    pub key: String,
+    pub value: String,
+}
+
+/// A question/answer pair within a `Faq` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaqItem {
+    pub question: String,
+    pub answer: String,
 }
 
 /// Inline extension found within text content.

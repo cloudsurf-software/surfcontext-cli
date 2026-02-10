@@ -4,8 +4,8 @@
 //! the block name. Unknown block names pass through unchanged.
 
 use crate::types::{
-    AttrValue, Attrs, Block, CalloutType, ColumnContent, DataFormat, DecisionStatus, Span,
-    TabPanel, TaskItem, Trend,
+    AttrValue, Attrs, Block, CalloutType, ColumnContent, DataFormat, DecisionStatus, FaqItem,
+    Span, StyleProperty, TabPanel, TaskItem, Trend,
 };
 
 /// Resolve a `Block::Unknown` into a typed variant, if the name matches a known
@@ -33,6 +33,14 @@ pub fn resolve_block(block: Block) -> Block {
         "tabs" => parse_tabs(content, *span),
         "columns" => parse_columns(content, *span),
         "quote" => parse_quote(attrs, content, *span),
+        "cta" => parse_cta(attrs, *span),
+        "hero-image" => parse_hero_image(attrs, *span),
+        "testimonial" => parse_testimonial(attrs, content, *span),
+        "style" => parse_style(content, *span),
+        "faq" => parse_faq(content, *span),
+        "pricing-table" => parse_pricing_table(content, *span),
+        "site" => parse_site(attrs, content, *span),
+        "page" => parse_page(attrs, content, *span),
         _ => block,
     }
 }
@@ -446,6 +454,271 @@ fn parse_figure(attrs: &Attrs, span: Span) -> Block {
         width,
         span,
     }
+}
+
+fn parse_cta(attrs: &Attrs, span: Span) -> Block {
+    let label = attr_string(attrs, "label").unwrap_or_default();
+    let href = attr_string(attrs, "href").unwrap_or_default();
+    let primary = attr_bool(attrs, "primary");
+
+    Block::Cta {
+        label,
+        href,
+        primary,
+        span,
+    }
+}
+
+fn parse_hero_image(attrs: &Attrs, span: Span) -> Block {
+    let src = attr_string(attrs, "src").unwrap_or_default();
+    let alt = attr_string(attrs, "alt");
+
+    Block::HeroImage { src, alt, span }
+}
+
+fn parse_testimonial(attrs: &Attrs, content: &str, span: Span) -> Block {
+    let author = attr_string(attrs, "author")
+        .or_else(|| attr_string(attrs, "name"));
+    let role = attr_string(attrs, "role")
+        .or_else(|| attr_string(attrs, "title"));
+    let company = attr_string(attrs, "company")
+        .or_else(|| attr_string(attrs, "org"));
+
+    Block::Testimonial {
+        content: content.to_string(),
+        author,
+        role,
+        company,
+        span,
+    }
+}
+
+fn parse_style(content: &str, span: Span) -> Block {
+    let mut properties = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Parse "key: value" lines
+        if let Some((key, value)) = trimmed.split_once(':') {
+            let key = key.trim().to_string();
+            let value = value.trim().to_string();
+            if !key.is_empty() && !value.is_empty() {
+                properties.push(StyleProperty { key, value });
+            }
+        }
+    }
+
+    Block::Style { properties, span }
+}
+
+fn parse_faq(content: &str, span: Span) -> Block {
+    let mut items = Vec::new();
+    let mut current_question: Option<String> = None;
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // FAQ questions: `### Question` inside faq block
+        if let Some(rest) = trimmed.strip_prefix("### ") {
+            // Flush previous item
+            if let Some(question) = current_question.take() {
+                items.push(FaqItem {
+                    question,
+                    answer: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+            current_question = Some(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("## ") {
+            // Also accept ## headers
+            if let Some(question) = current_question.take() {
+                items.push(FaqItem {
+                    question,
+                    answer: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+            current_question = Some(rest.trim().to_string());
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    // Flush final item
+    if let Some(question) = current_question {
+        items.push(FaqItem {
+            question,
+            answer: current_lines.join("\n").trim().to_string(),
+        });
+    }
+
+    Block::Faq { items, span }
+}
+
+fn parse_pricing_table(content: &str, span: Span) -> Block {
+    let (headers, rows) = parse_table_content(content);
+
+    Block::PricingTable {
+        headers,
+        rows,
+        span,
+    }
+}
+
+fn parse_site(attrs: &Attrs, content: &str, span: Span) -> Block {
+    let domain = attr_string(attrs, "domain");
+
+    let mut properties = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once(':') {
+            let key = key.trim().to_string();
+            let value = value.trim().to_string();
+            if !key.is_empty() && !value.is_empty() {
+                properties.push(StyleProperty { key, value });
+            }
+        }
+    }
+
+    Block::Site {
+        domain,
+        properties,
+        span,
+    }
+}
+
+fn parse_page(attrs: &Attrs, content: &str, span: Span) -> Block {
+    let route = attr_string(attrs, "route").unwrap_or_default();
+    let layout = attr_string(attrs, "layout");
+    let title = attr_string(attrs, "title");
+    let sidebar = attr_bool(attrs, "sidebar");
+
+    // Scan content for leaf directives, interleaving with markdown.
+    let children = parse_page_children(content);
+
+    Block::Page {
+        route,
+        layout,
+        title,
+        sidebar,
+        content: content.to_string(),
+        children,
+        span,
+    }
+}
+
+// ------------------------------------------------------------------
+// Page child block scanner
+// ------------------------------------------------------------------
+
+/// Scan page content for leaf directives (single-line `::name[attrs]`).
+///
+/// Lines matching a known block directive are resolved via `resolve_block()`.
+/// Consecutive non-directive lines are collected as `Block::Markdown`.
+fn parse_page_children(content: &str) -> Vec<Block> {
+    let mut children = Vec::new();
+    let mut md_lines: Vec<&str> = Vec::new();
+
+    for line in content.lines() {
+        if let Some(block) = try_parse_leaf_directive(line) {
+            // Flush accumulated markdown
+            flush_md_lines(&mut md_lines, &mut children);
+            children.push(block);
+        } else {
+            md_lines.push(line);
+        }
+    }
+
+    // Flush remaining markdown
+    flush_md_lines(&mut md_lines, &mut children);
+
+    children
+}
+
+/// Try to parse a single line as a leaf directive (`::name[attrs]`).
+///
+/// Returns `Some(resolved_block)` if the line matches, `None` otherwise.
+fn try_parse_leaf_directive(line: &str) -> Option<Block> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("::") {
+        return None;
+    }
+
+    // Count leading colons — must be exactly 2 for a top-level directive.
+    let depth = trimmed.chars().take_while(|&c| c == ':').count();
+    if depth != 2 {
+        return None;
+    }
+
+    let rest = &trimmed[2..];
+    if rest.is_empty() {
+        return None; // closing `::`, not an opening directive
+    }
+
+    // Must start with alphabetic character.
+    let first = rest.chars().next()?;
+    if !first.is_alphabetic() {
+        return None;
+    }
+
+    // Scan block name.
+    let name_end = rest
+        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+        .unwrap_or(rest.len());
+    let name = &rest[..name_end];
+    let remainder = &rest[name_end..];
+
+    // Extract attrs if present.
+    let attrs_str = if remainder.starts_with('[') {
+        if let Some(close) = remainder.find(']') {
+            &remainder[..=close]
+        } else {
+            remainder
+        }
+    } else {
+        ""
+    };
+
+    let attrs = crate::attrs::parse_attrs(attrs_str).unwrap_or_default();
+    let dummy_span = Span {
+        start_line: 0,
+        end_line: 0,
+        start_offset: 0,
+        end_offset: 0,
+    };
+
+    let block = Block::Unknown {
+        name: name.to_string(),
+        attrs,
+        content: String::new(),
+        span: dummy_span,
+    };
+
+    Some(resolve_block(block))
+}
+
+/// Flush accumulated markdown lines into a `Block::Markdown` if non-empty.
+fn flush_md_lines(lines: &mut Vec<&str>, children: &mut Vec<Block>) {
+    let text = lines.join("\n");
+    let trimmed = text.trim();
+    if !trimmed.is_empty() {
+        children.push(Block::Markdown {
+            content: text.trim().to_string(),
+            span: Span {
+                start_line: 0,
+                end_line: 0,
+                start_offset: 0,
+                end_offset: 0,
+            },
+        });
+    }
+    lines.clear();
 }
 
 // ------------------------------------------------------------------
@@ -942,6 +1215,450 @@ mod tests {
                 assert_eq!(attribution, Some("Knuth".to_string()));
             }
             other => panic!("Expected Quote, got {other:?}"),
+        }
+    }
+
+    // -- Cta -------------------------------------------------------
+
+    #[test]
+    fn resolve_cta_primary() {
+        let block = unknown(
+            "cta",
+            attrs(&[
+                ("label", AttrValue::String("Get Started".into())),
+                ("href", AttrValue::String("/signup".into())),
+                ("primary", AttrValue::Bool(true)),
+            ]),
+            "",
+        );
+        match resolve_block(block) {
+            Block::Cta {
+                label,
+                href,
+                primary,
+                ..
+            } => {
+                assert_eq!(label, "Get Started");
+                assert_eq!(href, "/signup");
+                assert!(primary);
+            }
+            other => panic!("Expected Cta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_cta_secondary() {
+        let block = unknown(
+            "cta",
+            attrs(&[
+                ("label", AttrValue::String("Learn More".into())),
+                ("href", AttrValue::String("https://example.com".into())),
+            ]),
+            "",
+        );
+        match resolve_block(block) {
+            Block::Cta {
+                label,
+                href,
+                primary,
+                ..
+            } => {
+                assert_eq!(label, "Learn More");
+                assert_eq!(href, "https://example.com");
+                assert!(!primary);
+            }
+            other => panic!("Expected Cta, got {other:?}"),
+        }
+    }
+
+    // -- HeroImage -------------------------------------------------
+
+    #[test]
+    fn resolve_hero_image_with_alt() {
+        let block = unknown(
+            "hero-image",
+            attrs(&[
+                ("src", AttrValue::String("hero.png".into())),
+                ("alt", AttrValue::String("Product screenshot".into())),
+            ]),
+            "",
+        );
+        match resolve_block(block) {
+            Block::HeroImage { src, alt, .. } => {
+                assert_eq!(src, "hero.png");
+                assert_eq!(alt, Some("Product screenshot".to_string()));
+            }
+            other => panic!("Expected HeroImage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_hero_image_no_alt() {
+        let block = unknown(
+            "hero-image",
+            attrs(&[("src", AttrValue::String("banner.jpg".into()))]),
+            "",
+        );
+        match resolve_block(block) {
+            Block::HeroImage { src, alt, .. } => {
+                assert_eq!(src, "banner.jpg");
+                assert!(alt.is_none());
+            }
+            other => panic!("Expected HeroImage, got {other:?}"),
+        }
+    }
+
+    // -- Testimonial -----------------------------------------------
+
+    #[test]
+    fn resolve_testimonial_full() {
+        let block = unknown(
+            "testimonial",
+            attrs(&[
+                ("author", AttrValue::String("Jane Dev".into())),
+                ("role", AttrValue::String("Engineer".into())),
+                ("company", AttrValue::String("Acme".into())),
+            ]),
+            "This tool replaced 3 others for me.",
+        );
+        match resolve_block(block) {
+            Block::Testimonial {
+                content,
+                author,
+                role,
+                company,
+                ..
+            } => {
+                assert_eq!(content, "This tool replaced 3 others for me.");
+                assert_eq!(author, Some("Jane Dev".to_string()));
+                assert_eq!(role, Some("Engineer".to_string()));
+                assert_eq!(company, Some("Acme".to_string()));
+            }
+            other => panic!("Expected Testimonial, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_testimonial_name_alias() {
+        let block = unknown(
+            "testimonial",
+            attrs(&[("name", AttrValue::String("Bob".into()))]),
+            "Great product.",
+        );
+        match resolve_block(block) {
+            Block::Testimonial { author, .. } => {
+                assert_eq!(author, Some("Bob".to_string()));
+            }
+            other => panic!("Expected Testimonial, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_testimonial_anonymous() {
+        let block = unknown("testimonial", Attrs::new(), "Anonymous feedback.");
+        match resolve_block(block) {
+            Block::Testimonial {
+                content,
+                author,
+                role,
+                company,
+                ..
+            } => {
+                assert_eq!(content, "Anonymous feedback.");
+                assert!(author.is_none());
+                assert!(role.is_none());
+                assert!(company.is_none());
+            }
+            other => panic!("Expected Testimonial, got {other:?}"),
+        }
+    }
+
+    // -- Style -----------------------------------------------------
+
+    #[test]
+    fn resolve_style_properties() {
+        let content = "hero-bg: gradient indigo\ncard-radius: lg\nmax-width: 1200px";
+        let block = unknown("style", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Style { properties, .. } => {
+                assert_eq!(properties.len(), 3);
+                assert_eq!(properties[0].key, "hero-bg");
+                assert_eq!(properties[0].value, "gradient indigo");
+                assert_eq!(properties[1].key, "card-radius");
+                assert_eq!(properties[1].value, "lg");
+                assert_eq!(properties[2].key, "max-width");
+                assert_eq!(properties[2].value, "1200px");
+            }
+            other => panic!("Expected Style, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_style_empty() {
+        let block = unknown("style", Attrs::new(), "");
+        match resolve_block(block) {
+            Block::Style { properties, .. } => {
+                assert!(properties.is_empty());
+            }
+            other => panic!("Expected Style, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_style_skips_blank_lines() {
+        let content = "  \nfont: inter\n\naccent: #6366f1\n  ";
+        let block = unknown("style", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Style { properties, .. } => {
+                assert_eq!(properties.len(), 2);
+                assert_eq!(properties[0].key, "font");
+                assert_eq!(properties[0].value, "inter");
+                assert_eq!(properties[1].key, "accent");
+                assert_eq!(properties[1].value, "#6366f1");
+            }
+            other => panic!("Expected Style, got {other:?}"),
+        }
+    }
+
+    // -- Faq -------------------------------------------------------
+
+    #[test]
+    fn resolve_faq_multiple_items() {
+        let content = "### Is my data encrypted?\nYes — AES-256 at rest, TLS in transit.\n\n### Can I self-host?\nYes. Docker image available.";
+        let block = unknown("faq", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Faq { items, .. } => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].question, "Is my data encrypted?");
+                assert!(items[0].answer.contains("AES-256"));
+                assert_eq!(items[1].question, "Can I self-host?");
+                assert!(items[1].answer.contains("Docker"));
+            }
+            other => panic!("Expected Faq, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_faq_h2_headers() {
+        let content = "## Question one\nAnswer one.\n\n## Question two\nAnswer two.";
+        let block = unknown("faq", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Faq { items, .. } => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].question, "Question one");
+                assert_eq!(items[1].question, "Question two");
+            }
+            other => panic!("Expected Faq, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_faq_empty() {
+        let block = unknown("faq", Attrs::new(), "");
+        match resolve_block(block) {
+            Block::Faq { items, .. } => {
+                assert!(items.is_empty());
+            }
+            other => panic!("Expected Faq, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_faq_single_item() {
+        let content = "### How does pricing work?\nWe charge per seat per month.";
+        let block = unknown("faq", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Faq { items, .. } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].question, "How does pricing work?");
+                assert_eq!(items[0].answer, "We charge per seat per month.");
+            }
+            other => panic!("Expected Faq, got {other:?}"),
+        }
+    }
+
+    // -- PricingTable ----------------------------------------------
+
+    #[test]
+    fn resolve_pricing_table() {
+        let content = "| | Free | Pro | Team |\n|---|---|---|---|\n| Price | $0 | $4.99/mo | $8.99/seat/mo |\n| Notes | Unlimited | Unlimited | Unlimited |";
+        let block = unknown("pricing-table", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::PricingTable {
+                headers, rows, ..
+            } => {
+                assert_eq!(headers, vec!["", "Free", "Pro", "Team"]);
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0][0], "Price");
+                assert_eq!(rows[0][2], "$4.99/mo");
+                assert_eq!(rows[1][3], "Unlimited");
+            }
+            other => panic!("Expected PricingTable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_pricing_table_empty() {
+        let block = unknown("pricing-table", Attrs::new(), "");
+        match resolve_block(block) {
+            Block::PricingTable {
+                headers, rows, ..
+            } => {
+                assert!(headers.is_empty());
+                assert!(rows.is_empty());
+            }
+            other => panic!("Expected PricingTable, got {other:?}"),
+        }
+    }
+
+    // -- Site ------------------------------------------------------
+
+    #[test]
+    fn resolve_site_with_domain() {
+        let block = unknown(
+            "site",
+            attrs(&[("domain", AttrValue::String("notesurf.io".into()))]),
+            "name: NoteSurf\ntagline: Notes that belong to you.\ntheme: dark\naccent: #6366f1",
+        );
+        match resolve_block(block) {
+            Block::Site {
+                domain,
+                properties,
+                ..
+            } => {
+                assert_eq!(domain, Some("notesurf.io".to_string()));
+                assert_eq!(properties.len(), 4);
+                assert_eq!(properties[0].key, "name");
+                assert_eq!(properties[0].value, "NoteSurf");
+                assert_eq!(properties[1].key, "tagline");
+                assert_eq!(properties[1].value, "Notes that belong to you.");
+                assert_eq!(properties[2].key, "theme");
+                assert_eq!(properties[2].value, "dark");
+            }
+            other => panic!("Expected Site, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_site_no_domain() {
+        let block = unknown("site", Attrs::new(), "name: Test Site");
+        match resolve_block(block) {
+            Block::Site {
+                domain,
+                properties,
+                ..
+            } => {
+                assert!(domain.is_none());
+                assert_eq!(properties.len(), 1);
+            }
+            other => panic!("Expected Site, got {other:?}"),
+        }
+    }
+
+    // -- Page ------------------------------------------------------
+
+    #[test]
+    fn resolve_page_basic() {
+        let block = unknown(
+            "page",
+            attrs(&[
+                ("route", AttrValue::String("/".into())),
+                ("layout", AttrValue::String("hero".into())),
+            ]),
+            "# Welcome\n\nSome intro text.",
+        );
+        match resolve_block(block) {
+            Block::Page {
+                route,
+                layout,
+                children,
+                ..
+            } => {
+                assert_eq!(route, "/");
+                assert_eq!(layout, Some("hero".to_string()));
+                // All content is markdown (no leaf directives)
+                assert_eq!(children.len(), 1);
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_page_with_nested_cta() {
+        let content = "# Take notes anywhere.\n\nIntro paragraph.\n\n::cta[label=\"Download\" href=\"/download\" primary]\n::cta[label=\"Try Web\" href=\"https://app.example.com\"]";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                // Should be: Markdown, Cta (primary), Cta (secondary)
+                assert_eq!(children.len(), 3, "children: {children:#?}");
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+                match &children[1] {
+                    Block::Cta {
+                        label, primary, ..
+                    } => {
+                        assert_eq!(label, "Download");
+                        assert!(*primary);
+                    }
+                    other => panic!("Expected Cta, got {other:?}"),
+                }
+                match &children[2] {
+                    Block::Cta {
+                        label, primary, ..
+                    } => {
+                        assert_eq!(label, "Try Web");
+                        assert!(!*primary);
+                    }
+                    other => panic!("Expected Cta, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_page_with_mixed_children() {
+        let content = "# Hero Title\n\n::hero-image[src=\"hero.png\" alt=\"Screenshot\"]\n\nMore text below.\n\n::cta[label=\"Sign Up\" href=\"/signup\" primary]";
+        let block = unknown(
+            "page",
+            attrs(&[
+                ("route", AttrValue::String("/".into())),
+                ("layout", AttrValue::String("hero".into())),
+            ]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                // Markdown, HeroImage, Markdown, Cta
+                assert_eq!(children.len(), 4, "children: {children:#?}");
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+                assert!(matches!(&children[1], Block::HeroImage { .. }));
+                assert!(matches!(&children[2], Block::Markdown { .. }));
+                assert!(matches!(&children[3], Block::Cta { .. }));
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_page_empty() {
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/about".into()))]),
+            "",
+        );
+        match resolve_block(block) {
+            Block::Page {
+                route, children, ..
+            } => {
+                assert_eq!(route, "/about");
+                assert!(children.is_empty());
+            }
+            other => panic!("Expected Page, got {other:?}"),
         }
     }
 
