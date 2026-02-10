@@ -544,13 +544,12 @@ mod tests {
         assert!(result.diagnostics.is_empty(), "diagnostics: {:?}", result.diagnostics);
         assert_eq!(result.doc.blocks.len(), 1);
         match &result.doc.blocks[0] {
-            Block::Unknown { name, content, .. } => {
-                assert_eq!(name, "columns");
-                assert!(content.contains(":::column"), "content should contain nested directives: {content}");
-                assert!(content.contains("Left text."));
-                assert!(content.contains("Right text."));
+            Block::Columns { columns, .. } => {
+                assert_eq!(columns.len(), 2);
+                assert!(columns[0].content.contains("Left text."));
+                assert!(columns[1].content.contains("Right text."));
             }
-            _ => panic!("Expected Unknown block"),
+            other => panic!("Expected Columns block, got {other:?}"),
         }
     }
 

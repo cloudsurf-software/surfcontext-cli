@@ -192,6 +192,43 @@ fn render_block(block: &Block) -> String {
             format!("{}", format!("[Figure: {cap}] ({src})").dimmed())
         }
 
+        Block::Tabs { tabs, .. } => {
+            let mut parts = Vec::new();
+            for (i, tab) in tabs.iter().enumerate() {
+                let label = format!("{}", format!("[Tab {}] {}", i + 1, tab.label).bold());
+                parts.push(format!("{label}\n{}", tab.content));
+            }
+            parts.join("\n\n")
+        }
+
+        Block::Columns { columns, .. } => {
+            let parts: Vec<String> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    let label = format!("{}", format!("[Col {}]", i + 1).dimmed());
+                    format!("{label}\n{}", col.content)
+                })
+                .collect();
+            parts.join("\n\n")
+        }
+
+        Block::Quote {
+            content,
+            attribution,
+            ..
+        } => {
+            let border = format!("{}", "\u{2502}".dimmed()); // │
+            let mut lines: Vec<String> = content
+                .lines()
+                .map(|l| format!("{border} {}", l.italic()))
+                .collect();
+            if let Some(attr) = attribution {
+                lines.push(format!("{border} {}", format!("\u{2014} {attr}").dimmed()));
+            }
+            lines.join("\n")
+        }
+
         Block::Unknown {
             name, content, ..
         } => {

@@ -138,6 +138,34 @@ fn render_block(block: &Block) -> String {
             }
         }
 
+        Block::Tabs { tabs, .. } => {
+            let parts: Vec<String> = tabs
+                .iter()
+                .map(|tab| format!("### {}\n\n{}", tab.label, tab.content))
+                .collect();
+            parts.join("\n\n")
+        }
+
+        Block::Columns { columns, .. } => {
+            let parts: Vec<String> = columns
+                .iter()
+                .map(|col| col.content.clone())
+                .collect();
+            parts.join("\n\n---\n\n")
+        }
+
+        Block::Quote {
+            content,
+            attribution,
+            ..
+        } => {
+            let mut lines: Vec<String> = content.lines().map(|l| format!("> {l}")).collect();
+            if let Some(attr) = attribution {
+                lines.push(format!(">\n> \u{2014} {attr}"));
+            }
+            lines.join("\n")
+        }
+
         Block::Unknown {
             name,
             content,

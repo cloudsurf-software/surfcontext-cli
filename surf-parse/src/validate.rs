@@ -153,7 +153,31 @@ fn validate_block(block: &Block, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
 
-        // Markdown, Tasks, Summary, Unknown — no required-field validation
+        Block::Tabs { tabs, span, .. } => {
+            if tabs.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "Tabs block has no tab panels".into(),
+                    span: Some(*span),
+                    code: Some("V070".into()),
+                });
+            }
+        }
+
+        Block::Quote {
+            content, span, ..
+        } => {
+            if content.trim().is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "Quote block has empty content".into(),
+                    span: Some(*span),
+                    code: Some("V080".into()),
+                });
+            }
+        }
+
+        // Markdown, Tasks, Summary, Columns, Unknown — no required-field validation
         _ => {}
     }
 }

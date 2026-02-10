@@ -205,6 +205,23 @@ pub enum Block {
         width: Option<String>,
         span: Span,
     },
+    /// Tabbed content with named panels.
+    Tabs {
+        tabs: Vec<TabPanel>,
+        span: Span,
+    },
+    /// Multi-column layout.
+    Columns {
+        columns: Vec<ColumnContent>,
+        span: Span,
+    },
+    /// Attributed quote with optional source.
+    Quote {
+        content: String,
+        attribution: Option<String>,
+        cite: Option<String>,
+        span: Span,
+    },
 }
 
 /// Callout/admonition type.
@@ -253,6 +270,19 @@ pub enum Trend {
     Up,
     Down,
     Flat,
+}
+
+/// A single tab panel within a `Tabs` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabPanel {
+    pub label: String,
+    pub content: String,
+}
+
+/// A single column in a `Columns` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnContent {
+    pub content: String,
 }
 
 /// Inline extension found within text content.

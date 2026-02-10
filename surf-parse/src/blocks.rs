@@ -4,7 +4,8 @@
 //! the block name. Unknown block names pass through unchanged.
 
 use crate::types::{
-    AttrValue, Attrs, Block, CalloutType, DataFormat, DecisionStatus, Span, TaskItem, Trend,
+    AttrValue, Attrs, Block, CalloutType, ColumnContent, DataFormat, DecisionStatus, Span,
+    TabPanel, TaskItem, Trend,
 };
 
 /// Resolve a `Block::Unknown` into a typed variant, if the name matches a known
@@ -29,6 +30,9 @@ pub fn resolve_block(block: Block) -> Block {
         "metric" => parse_metric(attrs, *span),
         "summary" => parse_summary(content, *span),
         "figure" => parse_figure(attrs, *span),
+        "tabs" => parse_tabs(content, *span),
+        "columns" => parse_columns(content, *span),
+        "quote" => parse_quote(attrs, content, *span),
         _ => block,
     }
 }
@@ -304,6 +308,127 @@ fn parse_metric(attrs: &Attrs, span: Span) -> Block {
 fn parse_summary(content: &str, span: Span) -> Block {
     Block::Summary {
         content: content.to_string(),
+        span,
+    }
+}
+
+fn parse_tabs(content: &str, span: Span) -> Block {
+    let mut tabs = Vec::new();
+    let mut current_label: Option<String> = None;
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Tab labels: `## Label` or `### Label` inside tabs block
+        if let Some(rest) = trimmed.strip_prefix("## ") {
+            // Flush previous tab
+            if let Some(label) = current_label.take() {
+                tabs.push(TabPanel {
+                    label,
+                    content: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+            current_label = Some(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("### ") {
+            if let Some(label) = current_label.take() {
+                tabs.push(TabPanel {
+                    label,
+                    content: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+            current_label = Some(rest.trim().to_string());
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    // Flush final tab
+    if let Some(label) = current_label {
+        tabs.push(TabPanel {
+            label,
+            content: current_lines.join("\n").trim().to_string(),
+        });
+    } else if !current_lines.is_empty() {
+        // No headers found — single unnamed tab
+        let text = current_lines.join("\n").trim().to_string();
+        if !text.is_empty() {
+            tabs.push(TabPanel {
+                label: "Tab 1".to_string(),
+                content: text,
+            });
+        }
+    }
+
+    Block::Tabs { tabs, span }
+}
+
+fn parse_columns(content: &str, span: Span) -> Block {
+    let mut columns = Vec::new();
+    let mut current_lines: Vec<&str> = Vec::new();
+    let mut found_separator = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Nested :::column directives serve as separators
+        if trimmed.starts_with(":::column") {
+            if !current_lines.is_empty() {
+                columns.push(ColumnContent {
+                    content: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+            found_separator = true;
+        } else if trimmed == ":::" {
+            // Close a :::column — flush content
+            if found_separator {
+                columns.push(ColumnContent {
+                    content: current_lines.join("\n").trim().to_string(),
+                });
+                current_lines.clear();
+            }
+        } else if trimmed == "---" && !found_separator {
+            // Horizontal rule as column separator (simpler syntax)
+            columns.push(ColumnContent {
+                content: current_lines.join("\n").trim().to_string(),
+            });
+            current_lines.clear();
+            found_separator = true;
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    // Flush remaining content
+    let remaining = current_lines.join("\n").trim().to_string();
+    if !remaining.is_empty() {
+        columns.push(ColumnContent {
+            content: remaining,
+        });
+    }
+
+    // If no separators were found, treat the whole thing as one column
+    if columns.is_empty() {
+        columns.push(ColumnContent {
+            content: content.trim().to_string(),
+        });
+    }
+
+    Block::Columns { columns, span }
+}
+
+fn parse_quote(attrs: &Attrs, content: &str, span: Span) -> Block {
+    let attribution = attr_string(attrs, "by")
+        .or_else(|| attr_string(attrs, "attribution"))
+        .or_else(|| attr_string(attrs, "author"));
+    let cite = attr_string(attrs, "cite")
+        .or_else(|| attr_string(attrs, "source"));
+
+    Block::Quote {
+        content: content.to_string(),
+        attribution,
+        cite,
         span,
     }
 }
@@ -682,6 +807,141 @@ mod tests {
                 assert!(width.is_none());
             }
             other => panic!("Expected Figure, got {other:?}"),
+        }
+    }
+
+    // -- Tabs ------------------------------------------------------
+
+    #[test]
+    fn resolve_tabs_with_headers() {
+        let content = "## Overview\nIntro text.\n\n## Details\nTechnical info.\n\n## FAQ\nQ&A here.";
+        let block = unknown("tabs", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Tabs { tabs, .. } => {
+                assert_eq!(tabs.len(), 3);
+                assert_eq!(tabs[0].label, "Overview");
+                assert!(tabs[0].content.contains("Intro text."));
+                assert_eq!(tabs[1].label, "Details");
+                assert!(tabs[1].content.contains("Technical info."));
+                assert_eq!(tabs[2].label, "FAQ");
+                assert!(tabs[2].content.contains("Q&A here."));
+            }
+            other => panic!("Expected Tabs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tabs_single_no_header() {
+        let content = "Just some text without any tab headers.";
+        let block = unknown("tabs", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Tabs { tabs, .. } => {
+                assert_eq!(tabs.len(), 1);
+                assert_eq!(tabs[0].label, "Tab 1");
+                assert!(tabs[0].content.contains("Just some text"));
+            }
+            other => panic!("Expected Tabs, got {other:?}"),
+        }
+    }
+
+    // -- Columns ---------------------------------------------------
+
+    #[test]
+    fn resolve_columns_with_nested_directives() {
+        let content = ":::column\nLeft content.\n:::\n:::column\nRight content.\n:::";
+        let block = unknown("columns", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Columns { columns, .. } => {
+                assert_eq!(columns.len(), 2);
+                assert_eq!(columns[0].content, "Left content.");
+                assert_eq!(columns[1].content, "Right content.");
+            }
+            other => panic!("Expected Columns, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_columns_with_hr_separator() {
+        let content = "Left side.\n---\nRight side.";
+        let block = unknown("columns", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Columns { columns, .. } => {
+                assert_eq!(columns.len(), 2);
+                assert_eq!(columns[0].content, "Left side.");
+                assert_eq!(columns[1].content, "Right side.");
+            }
+            other => panic!("Expected Columns, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_columns_single() {
+        let content = "All in one column.";
+        let block = unknown("columns", Attrs::new(), content);
+        match resolve_block(block) {
+            Block::Columns { columns, .. } => {
+                assert_eq!(columns.len(), 1);
+                assert_eq!(columns[0].content, "All in one column.");
+            }
+            other => panic!("Expected Columns, got {other:?}"),
+        }
+    }
+
+    // -- Quote -----------------------------------------------------
+
+    #[test]
+    fn resolve_quote_with_attribution() {
+        let block = unknown(
+            "quote",
+            attrs(&[
+                ("by", AttrValue::String("Alan Kay".into())),
+                ("cite", AttrValue::String("ACM 1971".into())),
+            ]),
+            "The best way to predict the future is to invent it.",
+        );
+        match resolve_block(block) {
+            Block::Quote {
+                content,
+                attribution,
+                cite,
+                ..
+            } => {
+                assert_eq!(content, "The best way to predict the future is to invent it.");
+                assert_eq!(attribution, Some("Alan Kay".to_string()));
+                assert_eq!(cite, Some("ACM 1971".to_string()));
+            }
+            other => panic!("Expected Quote, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_quote_no_attribution() {
+        let block = unknown("quote", Attrs::new(), "Anonymous wisdom.");
+        match resolve_block(block) {
+            Block::Quote {
+                content,
+                attribution,
+                ..
+            } => {
+                assert_eq!(content, "Anonymous wisdom.");
+                assert!(attribution.is_none());
+            }
+            other => panic!("Expected Quote, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_quote_author_alias() {
+        let block = unknown(
+            "quote",
+            attrs(&[("author", AttrValue::String("Knuth".into()))]),
+            "Premature optimization.",
+        );
+        match resolve_block(block) {
+            Block::Quote { attribution, .. } => {
+                assert_eq!(attribution, Some("Knuth".to_string()));
+            }
+            other => panic!("Expected Quote, got {other:?}"),
         }
     }
 

@@ -128,24 +128,23 @@ fn nesting_fixture_parses() {
         "Nesting fixture should produce blocks"
     );
 
-    // The nested columns blocks should be parsed as Unknown (since "columns"
-    // is not one of the 8 known block types)
+    // The nested columns blocks should be resolved to Block::Columns
     let columns_blocks: Vec<_> = result
         .doc
         .blocks
         .iter()
-        .filter(|b| matches!(b, Block::Unknown { name, .. } if name == "columns"))
+        .filter(|b| matches!(b, Block::Columns { .. }))
         .collect();
     assert!(
         !columns_blocks.is_empty(),
-        "Should contain at least one columns block"
+        "Should contain at least one Columns block"
     );
 
-    // Nested content should be preserved inside the parent block
-    if let Block::Unknown { content, .. } = &columns_blocks[0] {
+    // Columns should have parsed the nested :::column directives into separate columns
+    if let Block::Columns { columns, .. } = &columns_blocks[0] {
         assert!(
-            content.contains(":::column"),
-            "Nested column directives should be in parent content, got: {content}"
+            !columns.is_empty(),
+            "Columns block should have parsed column content"
         );
     }
 

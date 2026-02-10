@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+mod build;
 mod config;
 mod init;
 mod sync;
@@ -74,6 +75,24 @@ enum Commands {
         /// Path to the .surf or .md file(s)
         files: Vec<String>,
     },
+
+    /// Build a .surf file into a static site
+    Build {
+        /// Path to the .surf file
+        file: String,
+
+        /// Output directory (default: dist/)
+        #[arg(long, default_value = "dist")]
+        out: String,
+
+        /// Page title (overrides front matter)
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Watch for changes and rebuild automatically
+        #[arg(long)]
+        watch: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -110,6 +129,12 @@ fn main() -> Result<()> {
         }
         Commands::Validate { files } => {
             handle_validate(&files)?;
+        }
+        Commands::Build { file, out, title, watch } => {
+            build::handle_build(&file, &out, title.as_deref(), cli.quiet)?;
+            if watch {
+                build::watch_and_rebuild(&file, &out, title.as_deref(), cli.quiet)?;
+            }
         }
     }
 

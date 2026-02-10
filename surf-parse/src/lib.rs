@@ -27,6 +27,8 @@ pub use error::*;
 pub use parse::parse;
 pub use types::*;
 
+pub use render_html::PageConfig;
+
 impl SurfDoc {
     /// Render this document as standard CommonMark markdown (no `::` markers).
     pub fn to_markdown(&self) -> String {
@@ -36,6 +38,11 @@ impl SurfDoc {
     /// Render this document as an HTML fragment with `surfdoc-*` CSS classes.
     pub fn to_html(&self) -> String {
         render_html::to_html(self)
+    }
+
+    /// Render this document as a complete HTML page with SurfDoc discovery metadata.
+    pub fn to_html_page(&self, config: &PageConfig) -> String {
+        render_html::to_html_page(self, config)
     }
 
     /// Render this document as ANSI-colored terminal text.

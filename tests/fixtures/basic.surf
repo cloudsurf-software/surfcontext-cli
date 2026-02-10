@@ -66,6 +66,40 @@ enabling structured documents that degrade gracefully to plain markdown.
 ::figure[src="architecture.png" caption="System Architecture" alt="SurfDoc architecture diagram"]
 ::
 
+## Multi-Column Layout
+
+::columns
+:::column
+**Left Column**
+
+This is the left column with its own content.
+:::
+:::column
+**Right Column**
+
+This is the right column with different content.
+:::
+::
+
+## Tabbed Content
+
+::tabs
+## Overview
+This tab contains the overview information.
+
+## Details
+This tab has detailed technical information about the implementation.
+
+## FAQ
+Frequently asked questions go here.
+::
+
+## Notable Quote
+
+::quote[by="Alan Kay" cite="ACM Conference 1971"]
+The best way to predict the future is to invent it.
+::
+
 ## Conclusion
 
-This completes the basic fixture covering all 8 block types plus front matter and markdown.
+This completes the basic fixture covering all 11 block types plus front matter and markdown.
