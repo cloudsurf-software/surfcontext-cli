@@ -28,7 +28,7 @@ pub use error::*;
 pub use parse::parse;
 pub use types::*;
 
-pub use render_html::PageConfig;
+pub use render_html::{PageConfig, SiteConfig, PageEntry, extract_site, render_site_page};
 
 impl SurfDoc {
     /// Render this document as standard CommonMark markdown (no `::` markers).

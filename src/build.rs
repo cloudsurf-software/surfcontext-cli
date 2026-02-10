@@ -1,4 +1,9 @@
 //! `surf build` — compile a .surf file into a static site with discovery metadata.
+//!
+//! Supports two modes:
+//! - **Single-page**: `.surf` files without `::site`/`::page` blocks produce one `index.html`.
+//! - **Multi-page**: `.surf` files with `::site` + `::page` blocks produce a directory of
+//!   HTML files at their declared routes, with shared navigation.
 
 use anyhow::Result;
 use colored::Colorize;
@@ -6,7 +11,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use surf_parse::PageConfig;
+use surf_parse::{extract_site, render_site_page, PageConfig};
 
 pub fn handle_build(file: &str, out_dir: &str, title: Option<&str>, quiet: bool) -> Result<()> {
     let file_path = Path::new(file);
@@ -30,43 +35,181 @@ pub fn handle_build(file: &str, out_dir: &str, title: Option<&str>, quiet: bool)
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "source.surf".to_string());
 
-    let config = PageConfig {
-        source_path: source_filename.clone(),
-        title: title.map(|t| t.to_string()),
-        ..Default::default()
-    };
-
-    let html = result.doc.to_html_page(&config);
-
-    // Create output directory
     let out_path = Path::new(out_dir);
-    std::fs::create_dir_all(out_path)
-        .map_err(|e| anyhow::anyhow!("Failed to create '{}': {}", out_dir, e))?;
 
-    // Write index.html
-    let index_path = out_path.join("index.html");
-    std::fs::write(&index_path, &html)
-        .map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", index_path.display(), e))?;
+    // Extract site structure
+    let (site_config, pages, loose_blocks) = extract_site(&result.doc);
 
-    // Copy source .surf file alongside the built output (discovery mechanism)
-    let source_dest = out_path.join(&source_filename);
-    std::fs::copy(file_path, &source_dest)
-        .map_err(|e| anyhow::anyhow!("Failed to copy source to '{}': {}", source_dest.display(), e))?;
+    if site_config.is_some() && !pages.is_empty() {
+        // Multi-page site build
+        let site = site_config.unwrap();
 
-    if !quiet {
-        println!("{} {}", "Built".green().bold(), index_path.display());
-        println!("  {} {}", "source:".dimmed(), source_dest.display());
-        println!(
-            "  {} {}",
-            "discovery:".dimmed(),
-            format!(
-                "<link rel=\"alternate\" type=\"text/surfdoc\" href=\"{}\">",
-                source_filename
-            )
-        );
+        // Build nav items from page list
+        let nav_items: Vec<(String, String)> = pages
+            .iter()
+            .map(|p| {
+                let display = p.title.clone().unwrap_or_else(|| {
+                    if p.route == "/" {
+                        "Home".to_string()
+                    } else {
+                        capitalize_route(&p.route)
+                    }
+                });
+                (p.route.clone(), display)
+            })
+            .collect();
+
+        // Create output directory
+        std::fs::create_dir_all(out_path)
+            .map_err(|e| anyhow::anyhow!("Failed to create '{}': {}", out_dir, e))?;
+
+        let mut built_count = 0;
+
+        for page in &pages {
+            let config = PageConfig {
+                source_path: source_filename.clone(),
+                title: title.map(|t| t.to_string()),
+                ..Default::default()
+            };
+
+            // If this is the "/" page and there are loose blocks, prepend them
+            let effective_page = if page.route == "/" && !loose_blocks.is_empty() {
+                let mut combined_children = loose_blocks.clone();
+                combined_children.extend(page.children.clone());
+                surf_parse::PageEntry {
+                    route: page.route.clone(),
+                    layout: page.layout.clone(),
+                    title: page.title.clone(),
+                    sidebar: page.sidebar,
+                    children: combined_children,
+                }
+            } else {
+                page.clone()
+            };
+
+            let html = render_site_page(&effective_page, &site, &nav_items, &config);
+
+            // Route "/" → dist/index.html
+            // Route "/about" → dist/about/index.html
+            let page_dir = if page.route == "/" {
+                out_path.to_path_buf()
+            } else {
+                let route_clean = page.route.trim_start_matches('/');
+                out_path.join(route_clean)
+            };
+
+            std::fs::create_dir_all(&page_dir)
+                .map_err(|e| anyhow::anyhow!("Failed to create '{}': {}", page_dir.display(), e))?;
+
+            let index_path = page_dir.join("index.html");
+            std::fs::write(&index_path, &html)
+                .map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", index_path.display(), e))?;
+
+            built_count += 1;
+
+            if !quiet {
+                println!("  {} {} → {}", "page".dimmed(), page.route, index_path.display());
+            }
+        }
+
+        // If there are loose blocks but no "/" page, create an index from them
+        if !pages.iter().any(|p| p.route == "/") && !loose_blocks.is_empty() {
+            let index_page = surf_parse::PageEntry {
+                route: "/".to_string(),
+                layout: None,
+                title: site.name.clone(),
+                sidebar: false,
+                children: loose_blocks,
+            };
+
+            let config = PageConfig {
+                source_path: source_filename.clone(),
+                title: title.map(|t| t.to_string()),
+                ..Default::default()
+            };
+
+            let html = render_site_page(&index_page, &site, &nav_items, &config);
+            let index_path = out_path.join("index.html");
+            std::fs::write(&index_path, &html)
+                .map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", index_path.display(), e))?;
+
+            built_count += 1;
+
+            if !quiet {
+                println!("  {} / → {}", "page".dimmed(), index_path.display());
+            }
+        }
+
+        // Copy source .surf file alongside the built output
+        let source_dest = out_path.join(&source_filename);
+        std::fs::copy(file_path, &source_dest)
+            .map_err(|e| anyhow::anyhow!("Failed to copy source to '{}': {}", source_dest.display(), e))?;
+
+        if !quiet {
+            println!(
+                "{} {} ({} pages → {})",
+                "Built".green().bold(),
+                source_filename,
+                built_count,
+                out_path.display(),
+            );
+        }
+    } else {
+        // Single-page fallback (current behavior)
+        let config = PageConfig {
+            source_path: source_filename.clone(),
+            title: title.map(|t| t.to_string()),
+            ..Default::default()
+        };
+
+        let html = result.doc.to_html_page(&config);
+
+        // Create output directory
+        std::fs::create_dir_all(out_path)
+            .map_err(|e| anyhow::anyhow!("Failed to create '{}': {}", out_dir, e))?;
+
+        // Write index.html
+        let index_path = out_path.join("index.html");
+        std::fs::write(&index_path, &html)
+            .map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", index_path.display(), e))?;
+
+        // Copy source .surf file alongside the built output (discovery mechanism)
+        let source_dest = out_path.join(&source_filename);
+        std::fs::copy(file_path, &source_dest)
+            .map_err(|e| anyhow::anyhow!("Failed to copy source to '{}': {}", source_dest.display(), e))?;
+
+        if !quiet {
+            println!("{} {}", "Built".green().bold(), index_path.display());
+            println!("  {} {}", "source:".dimmed(), source_dest.display());
+            println!(
+                "  {} {}",
+                "discovery:".dimmed(),
+                format!(
+                    "<link rel=\"alternate\" type=\"text/surfdoc\" href=\"{}\">",
+                    source_filename
+                )
+            );
+        }
     }
 
     Ok(())
+}
+
+/// Capitalize a route path for use as a nav label.
+/// "/about" → "About", "/contact-us" → "Contact Us"
+fn capitalize_route(route: &str) -> String {
+    route
+        .trim_start_matches('/')
+        .split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Watch the source file for changes and rebuild on each save.

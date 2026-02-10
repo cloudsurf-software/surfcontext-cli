@@ -4,7 +4,7 @@
 //! rendered through `pulldown-cmark`. All other content is HTML-escaped to
 //! prevent XSS.
 
-use crate::types::{Block, CalloutType, DecisionStatus, SurfDoc, Trend};
+use crate::types::{Block, CalloutType, DecisionStatus, StyleProperty, SurfDoc, Trend};
 
 /// Configuration for full-page HTML rendering with SurfDoc discovery metadata.
 #[derive(Debug, Clone)]
@@ -753,6 +753,223 @@ fn capitalize(s: &str) -> String {
         None => String::new(),
         Some(c) => c.to_uppercase().to_string() + chars.as_str(),
     }
+}
+
+// -- Multi-page site extraction and rendering --------------------------
+
+/// Extracted site-level configuration from a `::site` block.
+#[derive(Debug, Clone, Default)]
+pub struct SiteConfig {
+    pub domain: Option<String>,
+    pub name: Option<String>,
+    pub tagline: Option<String>,
+    pub theme: Option<String>,
+    pub accent: Option<String>,
+    pub font: Option<String>,
+    pub properties: Vec<StyleProperty>,
+}
+
+/// A single page extracted from a `::page` block.
+#[derive(Debug, Clone)]
+pub struct PageEntry {
+    pub route: String,
+    pub layout: Option<String>,
+    pub title: Option<String>,
+    pub sidebar: bool,
+    pub children: Vec<Block>,
+}
+
+/// Extract site config and page list from a parsed SurfDoc.
+///
+/// Returns `(site_config, pages, loose_blocks)` where `loose_blocks` are
+/// top-level blocks that are neither `Site` nor `Page`.
+pub fn extract_site(doc: &SurfDoc) -> (Option<SiteConfig>, Vec<PageEntry>, Vec<Block>) {
+    let mut site_config: Option<SiteConfig> = None;
+    let mut pages: Vec<PageEntry> = Vec::new();
+    let mut loose: Vec<Block> = Vec::new();
+
+    for block in &doc.blocks {
+        match block {
+            Block::Site {
+                domain,
+                properties,
+                ..
+            } => {
+                let mut config = SiteConfig {
+                    domain: domain.clone(),
+                    properties: properties.clone(),
+                    ..Default::default()
+                };
+                for prop in properties {
+                    match prop.key.as_str() {
+                        "name" => config.name = Some(prop.value.clone()),
+                        "tagline" => config.tagline = Some(prop.value.clone()),
+                        "theme" => config.theme = Some(prop.value.clone()),
+                        "accent" => config.accent = Some(prop.value.clone()),
+                        "font" => config.font = Some(prop.value.clone()),
+                        _ => {}
+                    }
+                }
+                site_config = Some(config);
+            }
+            Block::Page {
+                route,
+                layout,
+                title,
+                sidebar,
+                children,
+                ..
+            } => {
+                pages.push(PageEntry {
+                    route: route.clone(),
+                    layout: layout.clone(),
+                    title: title.clone(),
+                    sidebar: *sidebar,
+                    children: children.clone(),
+                });
+            }
+            other => {
+                loose.push(other.clone());
+            }
+        }
+    }
+
+    (site_config, pages, loose)
+}
+
+/// CSS for site-level navigation and footer.
+const SITE_NAV_CSS: &str = r#"
+/* Site navigation */
+.surfdoc-site-nav { display: flex; align-items: center; gap: 1.5rem; padding: 0.75rem 1.5rem; background: var(--bg-card); border-bottom: 1px solid var(--border-subtle); max-width: 100%; position: sticky; top: 0; z-index: 100; }
+.surfdoc-site-nav .site-name { font-weight: 700; color: #fff; font-size: 1rem; text-decoration: none; margin-right: auto; }
+.surfdoc-site-nav a { color: var(--text-dim); text-decoration: none; font-size: 0.875rem; padding: 0.25rem 0.5rem; border-radius: 4px; transition: color 0.15s, background 0.15s; }
+.surfdoc-site-nav a:hover { color: var(--text); background: var(--bg-hover); }
+.surfdoc-site-nav a.active { color: var(--accent); font-weight: 600; }
+
+/* Site footer */
+.surfdoc-site-footer { margin-top: 4rem; padding: 1.5rem; border-top: 1px solid var(--border-subtle); text-align: center; color: var(--text-muted); font-size: 0.8rem; }
+"#;
+
+/// Render a full HTML page for one route within a multi-page site.
+///
+/// Produces a `<!DOCTYPE html>` page with site-level `<nav>`, page content,
+/// and a footer. Theme and accent from `SiteConfig` are applied via CSS variables.
+pub fn render_site_page(
+    page: &PageEntry,
+    site: &SiteConfig,
+    nav_items: &[(String, String)], // (route, title) pairs
+    config: &PageConfig,
+) -> String {
+    // Render page children as HTML
+    let mut body_parts: Vec<String> = Vec::new();
+    for child in &page.children {
+        body_parts.push(render_block(child));
+    }
+    let body = body_parts.join("\n");
+
+    let lang = config.lang.as_deref().unwrap_or("en");
+    let site_name = site
+        .name
+        .as_deref()
+        .unwrap_or("SurfDoc Site");
+
+    // Title: page title > site name + route
+    let title = match &page.title {
+        Some(t) => format!("{} — {}", t, site_name),
+        None if page.route == "/" => site_name.to_string(),
+        None => format!("{} — {}", page.route.trim_start_matches('/'), site_name),
+    };
+
+    let source_path = escape_html(&config.source_path);
+
+    // Build navigation HTML
+    let mut nav_html = format!(
+        "<nav class=\"surfdoc-site-nav\" role=\"navigation\" aria-label=\"Site navigation\">\n  <a href=\"/index.html\" class=\"site-name\">{}</a>\n",
+        escape_html(site_name)
+    );
+    for (route, nav_title) in nav_items {
+        let href = if route == "/" {
+            "/index.html".to_string()
+        } else {
+            format!("{}/index.html", route)
+        };
+        let active = if *route == page.route { " active" } else { "" };
+        nav_html.push_str(&format!(
+            "  <a href=\"{}\"{}>{}</a>\n",
+            escape_html(&href),
+            if active.is_empty() {
+                String::new()
+            } else {
+                format!(" class=\"active\"")
+            },
+            escape_html(nav_title),
+        ));
+    }
+    nav_html.push_str("</nav>");
+
+    // Build footer
+    let footer_html = format!(
+        "<footer class=\"surfdoc-site-footer\">{}</footer>",
+        escape_html(site_name),
+    );
+
+    // Build optional CSS variable overrides from site config
+    let mut css_overrides = String::new();
+    if let Some(accent) = &site.accent {
+        css_overrides.push_str(&format!("--accent: {};\n", escape_html(accent)));
+    }
+    let override_block = if css_overrides.is_empty() {
+        String::new()
+    } else {
+        format!("\n:root {{\n{}}}", css_overrides)
+    };
+
+    // Build optional meta tags
+    let mut meta_extra = String::new();
+    if let Some(desc) = &config.description {
+        meta_extra.push_str(&format!(
+            "\n    <meta name=\"description\" content=\"{}\">",
+            escape_html(desc)
+        ));
+    }
+    if let Some(url) = &config.canonical_url {
+        meta_extra.push_str(&format!(
+            "\n    <link rel=\"canonical\" href=\"{}\">",
+            escape_html(url)
+        ));
+    }
+
+    format!(
+        r#"<!-- Built with SurfDoc — source: {source_path} -->
+<!DOCTYPE html>
+<html lang="{lang}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="SurfDoc v0.1">
+    <link rel="alternate" type="text/surfdoc" href="{source_path}">
+    <title>{title}</title>{meta_extra}
+    <style>{css}{nav_css}{override_block}</style>
+</head>
+<body>
+{nav}
+<article class="surfdoc">
+{body}
+</article>
+{footer}
+</body>
+</html>"#,
+        source_path = source_path,
+        lang = escape_html(lang),
+        title = escape_html(&title),
+        meta_extra = meta_extra,
+        css = SURFDOC_CSS,
+        nav_css = SITE_NAV_CSS,
+        override_block = override_block,
+        nav = nav_html,
+        body = body,
+        footer = footer_html,
+    )
 }
 
 #[cfg(test)]
@@ -1564,5 +1781,201 @@ mod tests {
         }]);
         let html = to_html(&doc);
         assert!(html.contains("role=\"group\""));
+    }
+
+    // -- extract_site() unit tests -----------------------------------------
+
+    #[test]
+    fn extract_site_separates_blocks() {
+        let doc = doc_with(vec![
+            Block::Site {
+                domain: Some("example.com".into()),
+                properties: vec![
+                    StyleProperty { key: "name".into(), value: "My Site".into() },
+                    StyleProperty { key: "accent".into(), value: "#ff0000".into() },
+                ],
+                span: span(),
+            },
+            Block::Markdown {
+                content: "Loose block".into(),
+                span: span(),
+            },
+            Block::Page {
+                route: "/".into(),
+                layout: Some("hero".into()),
+                title: Some("Home".into()),
+                sidebar: false,
+                content: "# Welcome".into(),
+                children: vec![Block::Markdown {
+                    content: "# Welcome".into(),
+                    span: span(),
+                }],
+                span: span(),
+            },
+            Block::Page {
+                route: "/about".into(),
+                layout: None,
+                title: Some("About".into()),
+                sidebar: false,
+                content: "# About".into(),
+                children: vec![Block::Markdown {
+                    content: "# About".into(),
+                    span: span(),
+                }],
+                span: span(),
+            },
+        ]);
+
+        let (site, pages, loose) = extract_site(&doc);
+
+        // Site config extracted
+        let site = site.expect("should have site config");
+        assert_eq!(site.domain.as_deref(), Some("example.com"));
+        assert_eq!(site.name.as_deref(), Some("My Site"));
+        assert_eq!(site.accent.as_deref(), Some("#ff0000"));
+
+        // Pages extracted
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].route, "/");
+        assert_eq!(pages[0].title.as_deref(), Some("Home"));
+        assert_eq!(pages[1].route, "/about");
+
+        // Loose blocks
+        assert_eq!(loose.len(), 1);
+    }
+
+    #[test]
+    fn extract_site_no_site_block() {
+        let doc = doc_with(vec![
+            Block::Markdown {
+                content: "Just markdown".into(),
+                span: span(),
+            },
+        ]);
+
+        let (site, pages, loose) = extract_site(&doc);
+        assert!(site.is_none());
+        assert!(pages.is_empty());
+        assert_eq!(loose.len(), 1);
+    }
+
+    #[test]
+    fn extract_site_config_fields() {
+        let doc = doc_with(vec![Block::Site {
+            domain: Some("test.io".into()),
+            properties: vec![
+                StyleProperty { key: "name".into(), value: "Test".into() },
+                StyleProperty { key: "tagline".into(), value: "A tagline".into() },
+                StyleProperty { key: "theme".into(), value: "dark".into() },
+                StyleProperty { key: "accent".into(), value: "#00ff00".into() },
+                StyleProperty { key: "font".into(), value: "inter".into() },
+                StyleProperty { key: "custom".into(), value: "value".into() },
+            ],
+            span: span(),
+        }]);
+
+        let (site, _, _) = extract_site(&doc);
+        let site = site.unwrap();
+        assert_eq!(site.name.as_deref(), Some("Test"));
+        assert_eq!(site.tagline.as_deref(), Some("A tagline"));
+        assert_eq!(site.theme.as_deref(), Some("dark"));
+        assert_eq!(site.accent.as_deref(), Some("#00ff00"));
+        assert_eq!(site.font.as_deref(), Some("inter"));
+        assert_eq!(site.properties.len(), 6); // all properties preserved
+    }
+
+    // -- render_site_page() unit tests ------------------------------------
+
+    #[test]
+    fn render_site_page_produces_valid_html() {
+        let site = SiteConfig {
+            name: Some("Test Site".into()),
+            accent: Some("#3b82f6".into()),
+            ..Default::default()
+        };
+        let page = PageEntry {
+            route: "/".into(),
+            layout: None,
+            title: Some("Home".into()),
+            sidebar: false,
+            children: vec![Block::Markdown {
+                content: "# Hello World".into(),
+                span: span(),
+            }],
+        };
+        let nav_items = vec![
+            ("/".into(), "Home".into()),
+            ("/about".into(), "About".into()),
+        ];
+        let config = PageConfig::default();
+
+        let html = render_site_page(&page, &site, &nav_items, &config);
+
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<html lang=\"en\">"));
+        assert!(html.contains("surfdoc-site-nav"));
+        assert!(html.contains("Test Site"));
+        assert!(html.contains("Hello World"));
+        assert!(html.contains("surfdoc-site-footer"));
+        assert!(html.contains("#3b82f6")); // accent override
+    }
+
+    #[test]
+    fn render_site_page_has_nav_links() {
+        let site = SiteConfig {
+            name: Some("Nav Test".into()),
+            ..Default::default()
+        };
+        let page = PageEntry {
+            route: "/about".into(),
+            layout: None,
+            title: Some("About".into()),
+            sidebar: false,
+            children: vec![],
+        };
+        let nav_items = vec![
+            ("/".into(), "Home".into()),
+            ("/about".into(), "About".into()),
+            ("/pricing".into(), "Pricing".into()),
+        ];
+        let config = PageConfig::default();
+
+        let html = render_site_page(&page, &site, &nav_items, &config);
+
+        assert!(html.contains("/index.html"));
+        assert!(html.contains("/about/index.html"));
+        assert!(html.contains("/pricing/index.html"));
+        // Active link for about page
+        assert!(html.contains("class=\"active\">About</a>"));
+    }
+
+    #[test]
+    fn render_site_page_title_format() {
+        let site = SiteConfig {
+            name: Some("My Site".into()),
+            ..Default::default()
+        };
+
+        // Page with title
+        let page = PageEntry {
+            route: "/about".into(),
+            layout: None,
+            title: Some("About Us".into()),
+            sidebar: false,
+            children: vec![],
+        };
+        let html = render_site_page(&page, &site, &[], &PageConfig::default());
+        assert!(html.contains("<title>About Us — My Site</title>"));
+
+        // Home page without title
+        let home = PageEntry {
+            route: "/".into(),
+            layout: None,
+            title: None,
+            sidebar: false,
+            children: vec![],
+        };
+        let html = render_site_page(&home, &site, &[], &PageConfig::default());
+        assert!(html.contains("<title>My Site</title>"));
     }
 }
