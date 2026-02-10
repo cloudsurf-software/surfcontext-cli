@@ -341,12 +341,13 @@ fn render_block(block: &Block) -> String {
             ..
         } => {
             let type_str = callout_type_str(*callout_type);
+            let role = if matches!(callout_type, CalloutType::Danger) { "alert" } else { "note" };
             let title_html = match title {
                 Some(t) => format!(": {}", escape_html(t)),
                 None => String::new(),
             };
             format!(
-                "<div class=\"surfdoc-callout surfdoc-callout-{type_str}\"><strong>{}</strong>{title_html}<p>{}</p></div>",
+                "<div class=\"surfdoc-callout surfdoc-callout-{type_str}\" role=\"{role}\"><strong>{}</strong>{title_html}<p>{}</p></div>",
                 capitalize(type_str),
                 escape_html(content),
             )
@@ -359,7 +360,7 @@ fn render_block(block: &Block) -> String {
             if !headers.is_empty() {
                 html.push_str("<thead><tr>");
                 for h in headers {
-                    html.push_str(&format!("<th>{}</th>", escape_html(h)));
+                    html.push_str(&format!("<th scope=\"col\">{}</th>", escape_html(h)));
                 }
                 html.push_str("</tr></thead>");
             }
@@ -382,8 +383,13 @@ fn render_block(block: &Block) -> String {
                 Some(l) => format!(" class=\"language-{}\"", escape_html(l)),
                 None => String::new(),
             };
+            let aria = match lang {
+                Some(l) => format!(" aria-label=\"{} code\"", escape_html(l)),
+                None => String::new(),
+            };
             format!(
-                "<pre class=\"surfdoc-code\"><code{}>{}</code></pre>",
+                "<pre class=\"surfdoc-code\"{}><code{}>{}</code></pre>",
+                aria,
                 class,
                 escape_html(content),
             )
@@ -398,7 +404,7 @@ fn render_block(block: &Block) -> String {
                     None => String::new(),
                 };
                 html.push_str(&format!(
-                    "<li><input type=\"checkbox\"{checked} disabled> {}{assignee_html}</li>",
+                    "<li><label><input type=\"checkbox\"{checked} disabled> {}</label>{assignee_html}</li>",
                     escape_html(&item.text),
                 ));
             }
@@ -418,7 +424,7 @@ fn render_block(block: &Block) -> String {
                 None => String::new(),
             };
             format!(
-                "<div class=\"surfdoc-decision surfdoc-decision-{status_str}\"><span class=\"status\">{status_str}</span>{date_html}<p>{}</p></div>",
+                "<div class=\"surfdoc-decision surfdoc-decision-{status_str}\" role=\"note\" aria-label=\"Decision: {status_str}\"><span class=\"status\">{status_str}</span>{date_html}<p>{}</p></div>",
                 escape_html(content),
             )
         }
@@ -440,8 +446,20 @@ fn render_block(block: &Block) -> String {
                 Some(u) => format!("<span class=\"unit\">{}</span>", escape_html(u)),
                 None => String::new(),
             };
+            let trend_text = match trend {
+                Some(Trend::Up) => ", trending up",
+                Some(Trend::Down) => ", trending down",
+                Some(Trend::Flat) => ", flat",
+                None => "",
+            };
+            let unit_text = match unit {
+                Some(u) => format!(" {}", u),
+                None => String::new(),
+            };
+            let aria_label = format!("{}: {}{}{}", label, value, unit_text, trend_text);
             format!(
-                "<div class=\"surfdoc-metric\"><span class=\"label\">{}</span><span class=\"value\">{}</span>{unit_html}{trend_html}</div>",
+                "<div class=\"surfdoc-metric\" role=\"group\" aria-label=\"{}\"><span class=\"label\">{}</span><span class=\"value\">{}</span>{unit_html}{trend_html}</div>",
+                escape_html(&aria_label),
                 escape_html(label),
                 escape_html(value),
             )
@@ -449,7 +467,7 @@ fn render_block(block: &Block) -> String {
 
         Block::Summary { content, .. } => {
             format!(
-                "<div class=\"surfdoc-summary\"><p>{}</p></div>",
+                "<div class=\"surfdoc-summary\" role=\"doc-abstract\"><p>{}</p></div>",
                 escape_html(content),
             )
         }
@@ -473,29 +491,34 @@ fn render_block(block: &Block) -> String {
         }
 
         Block::Tabs { tabs, .. } => {
-            let mut html = String::from("<div class=\"surfdoc-tabs\"><nav>");
+            let mut html = String::from("<div class=\"surfdoc-tabs\">");
+            html.push_str("<nav role=\"tablist\">");
             for (i, tab) in tabs.iter().enumerate() {
-                let active = if i == 0 { " active" } else { "" };
+                let selected = if i == 0 { "true" } else { "false" };
+                let tabindex = if i == 0 { "0" } else { "-1" };
                 html.push_str(&format!(
-                    "<button class=\"tab-btn{}\" data-tab=\"tab-{}\">{}</button>",
-                    active,
+                    "<button class=\"tab-btn{}\" role=\"tab\" aria-selected=\"{}\" aria-controls=\"surfdoc-panel-{}\" id=\"surfdoc-tab-{}\" tabindex=\"{}\">{}</button>",
+                    if i == 0 { " active" } else { "" },
+                    selected,
                     i,
+                    i,
+                    tabindex,
                     escape_html(&tab.label)
                 ));
             }
             html.push_str("</nav>");
             for (i, tab) in tabs.iter().enumerate() {
                 let active = if i == 0 { " active" } else { "" };
+                let hidden = if i == 0 { "" } else { " hidden" };
                 let parser = pulldown_cmark::Parser::new(&tab.content);
                 let mut content_html = String::new();
                 pulldown_cmark::html::push_html(&mut content_html, parser);
                 html.push_str(&format!(
-                    "<div class=\"tab-panel{}\" data-tab=\"tab-{}\">{}</div>",
-                    active, i, content_html
+                    "<div class=\"tab-panel{}\" role=\"tabpanel\" id=\"surfdoc-panel-{}\" aria-labelledby=\"surfdoc-tab-{}\" tabindex=\"0\"{}>{}</div>",
+                    active, i, i, hidden, content_html
                 ));
             }
-            // Inline script for tab switching
-            html.push_str(r#"<script>document.querySelectorAll('.surfdoc-tabs').forEach(t=>{t.querySelectorAll('.tab-btn').forEach(b=>{b.onclick=()=>{t.querySelectorAll('.tab-btn,.tab-panel').forEach(e=>e.classList.remove('active'));b.classList.add('active');t.querySelector('.tab-panel[data-tab="'+b.dataset.tab+'"]').classList.add('active')}})})</script>"#);
+            html.push_str(r#"<script>document.querySelectorAll('.surfdoc-tabs').forEach(t=>{t.querySelectorAll('[role="tab"]').forEach(b=>{b.onclick=()=>{t.querySelectorAll('[role="tab"]').forEach(e=>{e.classList.remove('active');e.setAttribute('aria-selected','false');e.tabIndex=-1});b.classList.add('active');b.setAttribute('aria-selected','true');b.tabIndex=0;t.querySelectorAll('[role="tabpanel"]').forEach(p=>{p.classList.remove('active');p.hidden=true});var panel=document.getElementById(b.getAttribute('aria-controls'));if(panel){panel.classList.add('active');panel.hidden=false}}})})</script>"#);
             html.push_str("</div>");
             html
         }
@@ -503,7 +526,7 @@ fn render_block(block: &Block) -> String {
         Block::Columns { columns, .. } => {
             let count = columns.len();
             let mut html = format!(
-                "<div class=\"surfdoc-columns\" data-cols=\"{}\">",
+                "<div class=\"surfdoc-columns\" role=\"group\" data-cols=\"{}\">",
                 count
             );
             for col in columns {
@@ -560,8 +583,14 @@ fn render_block(block: &Block) -> String {
 
         Block::HeroImage { src, alt, .. } => {
             let alt_attr = alt.as_deref().unwrap_or("");
+            let role_attr = if !alt_attr.is_empty() {
+                format!(" role=\"img\" aria-label=\"{}\"", escape_html(alt_attr))
+            } else {
+                String::new()
+            };
             format!(
-                "<div class=\"surfdoc-hero-image\"><img src=\"{}\" alt=\"{}\" /></div>",
+                "<div class=\"surfdoc-hero-image\"{}><img src=\"{}\" alt=\"{}\" /></div>",
+                role_attr,
                 escape_html(src),
                 escape_html(alt_attr),
             )
@@ -574,7 +603,11 @@ fn render_block(block: &Block) -> String {
             company,
             ..
         } => {
-            let mut html = String::from("<div class=\"surfdoc-testimonial\"><blockquote>");
+            let aria_label = match author {
+                Some(a) => format!(" aria-label=\"Testimonial from {}\"", escape_html(a)),
+                None => " aria-label=\"Testimonial\"".to_string(),
+            };
+            let mut html = format!("<div class=\"surfdoc-testimonial\" role=\"figure\"{}><blockquote>", aria_label);
             html.push_str(&escape_html(content));
             html.push_str("</blockquote>");
             if author.is_some() || role.is_some() || company.is_some() {
@@ -605,7 +638,7 @@ fn render_block(block: &Block) -> String {
                 .map(|p| format!("{}={}", escape_html(&p.key), escape_html(&p.value)))
                 .collect();
             format!(
-                "<div class=\"surfdoc-style\" data-properties=\"{}\"></div>",
+                "<div class=\"surfdoc-style\" aria-hidden=\"true\" data-properties=\"{}\"></div>",
                 escape_html(&pairs.join(";"))
             )
         }
@@ -626,11 +659,11 @@ fn render_block(block: &Block) -> String {
         Block::PricingTable {
             headers, rows, ..
         } => {
-            let mut html = String::from("<table class=\"surfdoc-pricing\">");
+            let mut html = String::from("<table class=\"surfdoc-pricing\" aria-label=\"Pricing comparison\">");
             if !headers.is_empty() {
                 html.push_str("<thead><tr>");
                 for h in headers {
-                    html.push_str(&format!("<th>{}</th>", escape_html(h)));
+                    html.push_str(&format!("<th scope=\"col\">{}</th>", escape_html(h)));
                 }
                 html.push_str("</tr></thead>");
             }
@@ -657,20 +690,24 @@ fn render_block(block: &Block) -> String {
                 .map(|p| format!("{}={}", escape_html(&p.key), escape_html(&p.value)))
                 .collect();
             format!(
-                "<div class=\"surfdoc-site\"{} data-properties=\"{}\"></div>",
+                "<div class=\"surfdoc-site\" aria-hidden=\"true\"{} data-properties=\"{}\"></div>",
                 domain_attr,
                 escape_html(&pairs.join(";")),
             )
         }
 
         Block::Page {
-            layout, children, ..
+            route, layout, title, children, ..
         } => {
             let layout_attr = match layout {
                 Some(l) => format!(" data-layout=\"{}\"", escape_html(l)),
                 None => String::new(),
             };
-            let mut html = format!("<section class=\"surfdoc-page\"{layout_attr}>");
+            let aria_label = match title {
+                Some(t) => format!(" aria-label=\"{}\"", escape_html(t)),
+                None => format!(" aria-label=\"Page: {}\"", escape_html(route)),
+            };
+            let mut html = format!("<section class=\"surfdoc-page\"{layout_attr}{aria_label}>");
             for child in children {
                 html.push_str(&render_block(child));
             }
@@ -682,7 +719,7 @@ fn render_block(block: &Block) -> String {
             name, content, ..
         } => {
             format!(
-                "<div class=\"surfdoc-unknown\" data-name=\"{}\">{}</div>",
+                "<div class=\"surfdoc-unknown\" role=\"note\" data-name=\"{}\">{}</div>",
                 escape_html(name),
                 escape_html(content),
             )
@@ -769,7 +806,7 @@ mod tests {
         assert!(html.contains("<table class=\"surfdoc-data\">"));
         assert!(html.contains("<thead>"));
         assert!(html.contains("<tbody>"));
-        assert!(html.contains("<th>Name</th>"));
+        assert!(html.contains("<th scope=\"col\">Name</th>"));
         assert!(html.contains("<td>Alice</td>"));
     }
 
@@ -783,7 +820,7 @@ mod tests {
             span: span(),
         }]);
         let html = to_html(&doc);
-        assert!(html.contains("<pre class=\"surfdoc-code\">"));
+        assert!(html.contains("<pre class=\"surfdoc-code\" aria-label=\"rust code\">"));
         assert!(html.contains("class=\"language-rust\""));
         assert!(html.contains("&lt;hello&gt;"), "Angle brackets should be escaped");
     }
@@ -1077,8 +1114,8 @@ mod tests {
         }]);
         let html = to_html(&doc);
         assert!(html.contains("class=\"surfdoc-pricing\""));
-        assert!(html.contains("<th>Free</th>"));
-        assert!(html.contains("<th>Pro</th>"));
+        assert!(html.contains("<th scope=\"col\">Free</th>"));
+        assert!(html.contains("<th scope=\"col\">Pro</th>"));
         assert!(html.contains("<td>$9/mo</td>"));
     }
 
@@ -1161,7 +1198,7 @@ mod tests {
             span: span(),
         }]);
         let html = to_html(&doc);
-        assert!(html.contains("<section class=\"surfdoc-page\">"));
+        assert!(html.contains("<section class=\"surfdoc-page\" aria-label=\"Pricing\">"));
         assert!(html.contains("<h1>Pricing</h1>")); // Markdown rendered
         assert!(html.contains("surfdoc-hero-image")); // Hero image rendered
     }
@@ -1288,5 +1325,244 @@ mod tests {
         let html = to_html_page(&doc, &config);
         assert!(!html.contains("<script>alert"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    // -- ARIA accessibility tests -----------------------------------------
+
+    #[test]
+    fn aria_callout_danger_role_alert() {
+        let doc = doc_with(vec![Block::Callout {
+            callout_type: CalloutType::Danger,
+            title: None,
+            content: "Critical error.".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"alert\""));
+    }
+
+    #[test]
+    fn aria_callout_info_role_note() {
+        let doc = doc_with(vec![Block::Callout {
+            callout_type: CalloutType::Info,
+            title: None,
+            content: "FYI.".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"note\""));
+    }
+
+    #[test]
+    fn aria_data_table_scope_col() {
+        let doc = doc_with(vec![Block::Data {
+            id: None,
+            format: DataFormat::Table,
+            sortable: false,
+            headers: vec!["Col1".into()],
+            rows: vec![],
+            raw_content: String::new(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("scope=\"col\""));
+    }
+
+    #[test]
+    fn aria_code_label() {
+        let doc = doc_with(vec![Block::Code {
+            lang: Some("python".into()),
+            file: None,
+            highlight: vec![],
+            content: "print()".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("aria-label=\"python code\""));
+    }
+
+    #[test]
+    fn aria_tasks_label_wraps_checkbox() {
+        let doc = doc_with(vec![Block::Tasks {
+            items: vec![TaskItem {
+                done: false,
+                text: "Do thing".into(),
+                assignee: None,
+            }],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("<label><input type=\"checkbox\" disabled> Do thing</label>"));
+    }
+
+    #[test]
+    fn aria_decision_role_note() {
+        let doc = doc_with(vec![Block::Decision {
+            status: DecisionStatus::Accepted,
+            date: None,
+            deciders: vec![],
+            content: "We decided.".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"note\""));
+        assert!(html.contains("aria-label=\"Decision: accepted\""));
+    }
+
+    #[test]
+    fn aria_metric_group_label() {
+        let doc = doc_with(vec![Block::Metric {
+            label: "MRR".into(),
+            value: "$5K".into(),
+            trend: Some(Trend::Up),
+            unit: Some("USD".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"group\""));
+        assert!(html.contains("aria-label=\"MRR: $5K USD, trending up\""));
+    }
+
+    #[test]
+    fn aria_summary_doc_abstract() {
+        let doc = doc_with(vec![Block::Summary {
+            content: "TL;DR.".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"doc-abstract\""));
+    }
+
+    #[test]
+    fn aria_tabs_tablist_pattern() {
+        let doc = doc_with(vec![Block::Tabs {
+            tabs: vec![
+                TabPanel { label: "A".into(), content: "First.".into() },
+                TabPanel { label: "B".into(), content: "Second.".into() },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"tablist\""));
+        assert!(html.contains("role=\"tab\""));
+        assert!(html.contains("role=\"tabpanel\""));
+        assert!(html.contains("aria-selected=\"true\""));
+        assert!(html.contains("aria-selected=\"false\""));
+        assert!(html.contains("aria-controls=\"surfdoc-panel-0\""));
+        assert!(html.contains("aria-labelledby=\"surfdoc-tab-0\""));
+    }
+
+    #[test]
+    fn aria_hero_image_role_img() {
+        let doc = doc_with(vec![Block::HeroImage {
+            src: "hero.png".into(),
+            alt: Some("Product shot".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"img\""));
+        assert!(html.contains("aria-label=\"Product shot\""));
+    }
+
+    #[test]
+    fn aria_testimonial_role_figure() {
+        let doc = doc_with(vec![Block::Testimonial {
+            content: "Great!".into(),
+            author: Some("Ada".into()),
+            role: None,
+            company: None,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"figure\""));
+        assert!(html.contains("aria-label=\"Testimonial from Ada\""));
+    }
+
+    #[test]
+    fn aria_style_hidden() {
+        let doc = doc_with(vec![Block::Style {
+            properties: vec![],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("aria-hidden=\"true\""));
+    }
+
+    #[test]
+    fn aria_site_hidden() {
+        let doc = doc_with(vec![Block::Site {
+            domain: None,
+            properties: vec![],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("aria-hidden=\"true\""));
+    }
+
+    #[test]
+    fn aria_page_label_from_title() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/about".into(),
+            layout: None,
+            title: Some("About Us".into()),
+            sidebar: false,
+            content: String::new(),
+            children: vec![],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("aria-label=\"About Us\""));
+    }
+
+    #[test]
+    fn aria_page_label_from_route() {
+        let doc = doc_with(vec![Block::Page {
+            route: "/pricing".into(),
+            layout: None,
+            title: None,
+            sidebar: false,
+            content: String::new(),
+            children: vec![],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("aria-label=\"Page: /pricing\""));
+    }
+
+    #[test]
+    fn aria_unknown_role_note() {
+        let doc = doc_with(vec![Block::Unknown {
+            name: "custom".into(),
+            attrs: Default::default(),
+            content: "stuff".into(),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"note\""));
+    }
+
+    #[test]
+    fn aria_pricing_table_scope() {
+        let doc = doc_with(vec![Block::PricingTable {
+            headers: vec!["".into(), "Basic".into()],
+            rows: vec![vec!["Price".into(), "$0".into()]],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("scope=\"col\""));
+        assert!(html.contains("aria-label=\"Pricing comparison\""));
+    }
+
+    #[test]
+    fn aria_columns_role_group() {
+        let doc = doc_with(vec![Block::Columns {
+            columns: vec![
+                ColumnContent { content: "A".into() },
+                ColumnContent { content: "B".into() },
+            ],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("role=\"group\""));
     }
 }
