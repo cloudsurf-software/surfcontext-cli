@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "surf-parse"]
+resolver = "3"
+
 [package]
 name = "surfcontext-cli"
 version = "0.1.0"
@@ -18,3 +22,4 @@ anyhow = "1"
 sha2 = "0.10"
 walkdir = "2"
 colored = "3"
+surf-parse = { path = "surf-parse" }

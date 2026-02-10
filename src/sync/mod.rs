@@ -152,7 +152,14 @@ pub fn run_sync(opts: &SyncOpts) -> Result<SyncReport> {
     }
     local::defensive_sweep(&repo_root, opts, &mut report)?;
 
-    // 6. Cross-repo sync
+    // 6. Path reference audit — catch .claude/ references in .context/ source files
+    if !opts.quiet {
+        println!();
+        println!("{}", "[Audit] Checking .context/ files for .claude/ path references...".bold());
+    }
+    local::audit_path_references(&repo_root, opts, &mut report)?;
+
+    // 7. Cross-repo sync
     if !opts.local_only {
         if !opts.quiet {
             println!();

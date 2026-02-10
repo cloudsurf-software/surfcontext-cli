@@ -354,6 +354,107 @@ pub fn defensive_sweep(
     Ok(())
 }
 
+/// Scan .context/ docs for accidental .claude/ path references.
+/// Files that reference .claude/docs/, .claude/agents/, etc. are likely mistakes —
+/// the source of truth is .context/ and all references should use .context/ paths.
+pub fn audit_path_references(
+    repo_root: &Path,
+    opts: &SyncOpts,
+    report: &mut SyncReport,
+) -> Result<()> {
+    let context_dir = repo_root.join(".context");
+    if !context_dir.exists() {
+        return Ok(());
+    }
+
+    let claude_path_patterns = [
+        ".claude/docs/",
+        ".claude/agents/",
+        ".claude/guides/",
+        ".claude/skills/",
+        ".claude/queue.md",
+    ];
+
+    // Directories to scan: .context/docs, .context/guides, .context/agents, .context/skills
+    let scan_dirs = ["docs", "agents", "guides", "skills"];
+    let mut violations: Vec<(String, usize, String)> = Vec::new();
+
+    for subdir in &scan_dirs {
+        let dir = context_dir.join(subdir);
+        if !dir.is_dir() {
+            continue;
+        }
+
+        for entry in walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map_or(false, |ext| ext == "md" || ext == "txt")
+            })
+        {
+            let content = match fs::read_to_string(entry.path()) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            for (line_num, line) in content.lines().enumerate() {
+                for pattern in &claude_path_patterns {
+                    if line.contains(pattern) {
+                        let rel_path = entry
+                            .path()
+                            .strip_prefix(repo_root)
+                            .unwrap_or(entry.path());
+                        violations.push((
+                            rel_path.display().to_string(),
+                            line_num + 1,
+                            pattern.to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Also scan CONTEXT.md itself
+    let context_md = repo_root.join("CONTEXT.md");
+    if context_md.exists() {
+        if let Ok(content) = fs::read_to_string(&context_md) {
+            for (line_num, line) in content.lines().enumerate() {
+                for pattern in &claude_path_patterns {
+                    if line.contains(pattern) {
+                        violations.push((
+                            "CONTEXT.md".to_string(),
+                            line_num + 1,
+                            pattern.to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        if !opts.quiet {
+            println!("  {}", "Clean — no .claude/ path references in .context/ files".green());
+        }
+    } else {
+        for (file, line, pattern) in &violations {
+            let msg = format!(
+                "{file}:{line} references `{pattern}` — should use .context/ path instead"
+            );
+            if !opts.quiet {
+                println!("  {} {}", "WARN:".yellow(), msg);
+            }
+            report.warnings.push(msg);
+        }
+    }
+
+    Ok(())
+}
+
 const REDIRECT_FILE_CONTENT: &str = "\
 <!-- DEPRECATED — this file has moved to .context/ -->
 <!-- This file is auto-managed by surf sync -->

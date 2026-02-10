@@ -86,10 +86,10 @@ pub fn generate_all(
 
 /// Generate CLAUDE.md from CONTEXT.md by path-substituting .context/ -> .claude/.
 fn generate_claude_md(context_content: &str) -> String {
-    let mut output = String::with_capacity(context_content.len() + 200);
+    let mut output = String::with_capacity(context_content.len() + 500);
 
     output.push_str("<!-- SurfContext ARDS v3.0 — surfcontext.org -->\n");
-    output.push_str("<!-- GENERATED — edit CONTEXT.md, then run scripts/surfcontext-sync.sh -->\n");
+    output.push_str("<!-- GENERATED — edit CONTEXT.md, then run surf sync -->\n");
 
     let transformed = context_content
         .replace(".context/docs/", ".claude/docs/")
@@ -100,15 +100,16 @@ fn generate_claude_md(context_content: &str) -> String {
         .replace(".context/", ".claude/");
 
     output.push_str(&transformed);
+    output.push_str(PATH_ENFORCEMENT_RULE);
     output
 }
 
 /// Generate AGENTS.md from CONTEXT.md by stripping persona and some sections.
 fn generate_agents_md(context_content: &str) -> String {
-    let mut output = String::with_capacity(context_content.len() + 200);
+    let mut output = String::with_capacity(context_content.len() + 500);
 
     output.push_str("<!-- SurfContext ARDS v3.0 — surfcontext.org -->\n");
-    output.push_str("<!-- GENERATED — edit CONTEXT.md, then run scripts/surfcontext-sync.sh -->\n");
+    output.push_str("<!-- GENERATED — edit CONTEXT.md, then run surf sync -->\n");
     output.push('\n');
 
     let mut state = AgentsState::Normal;
@@ -174,8 +175,30 @@ fn generate_agents_md(context_content: &str) -> String {
         i += 1;
     }
 
+    output.push_str(PATH_ENFORCEMENT_RULE);
     output
 }
+
+/// Rule injected into ALL generated platform files (CLAUDE.md, AGENTS.md, .cursorrules).
+/// Tells agents to write to .context/ (source of truth), not .claude/ (symlinked).
+const PATH_ENFORCEMENT_RULE: &str = "\n\n\
+<!-- surf sync: path enforcement rule (injected automatically) -->\n\
+## Source of Truth: `.context/`\n\
+\n\
+The `.claude/` directory is **generated** — its subdirectories (`docs/`, `agents/`, `guides/`, `skills/`) \
+are symlinks to `.context/`. The queue file (`.claude/queue.md`) is a copy.\n\
+\n\
+**Rules for all agents (Claude, Codex, Cursor)**:\n\
+- When **creating or editing** files in docs, agents, guides, or skills: always use `.context/` paths \
+(e.g., `.context/docs/foo.md`, NOT `.claude/docs/foo.md`)\n\
+- When **reading** files: either path works (symlinks resolve the same), but prefer `.context/`\n\
+- When **telling the user** or **telling subagents** where a file is: always say `.context/`\n\
+- When **referencing paths in documents** you write: always use `.context/`\n\
+- **Never** create new directories inside `.claude/` — create them in `.context/` and run `surf sync`\n\
+- To edit the queue: edit `.context/queue.md` (`.claude/queue.md` is overwritten by sync)\n\
+\n\
+This rule is enforced by `surf sync` which audits `.context/` files for accidental `.claude/` references.\n\
+";
 
 #[derive(Clone, Copy)]
 enum AgentsState<'a> {

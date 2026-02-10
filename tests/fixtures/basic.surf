@@ -1,0 +1,71 @@
+---
+title: "Basic SurfDoc Test"
+type: doc
+status: active
+tags: [test, parser, surfdoc]
+created: "2026-02-10"
+author: "Test Suite"
+---
+
+# Introduction
+
+This document exercises all 8 SurfDoc block types alongside normal markdown content.
+
+::callout[type=warning]
+This is a warning callout to test the callout block type.
+Pay attention to this message.
+::
+
+## Data Section
+
+::data[format=csv]
+Product, Revenue, Growth
+TaskSurf, $2K, 15%
+Wavesite, $500, 8%
+NoteSurf, $0, N/A
+::
+
+Here is some markdown between blocks with **bold** and *italic* text.
+
+::code[lang=rust]
+fn main() {
+    println!("Hello, SurfDoc!");
+}
+::
+
+## Task Tracking
+
+::tasks
+- [x] Implement parser
+- [x] Add block resolution
+- [ ] Write integration tests
+- [ ] Ship v1.0 @brady
+::
+
+## Architecture Decision
+
+::decision[status=accepted date="2026-02-10"]
+We chose Rust for the surf-parse crate due to its strong type system,
+zero-cost abstractions, and excellent error handling.
+::
+
+## Key Metrics
+
+::metric[label="Parse Speed" value="<1ms" trend=up unit="per file"]
+::
+
+## Executive Summary
+
+::summary
+The SurfDoc format provides a markdown superset with typed block directives,
+enabling structured documents that degrade gracefully to plain markdown.
+::
+
+## Architecture Diagram
+
+::figure[src="architecture.png" caption="System Architecture" alt="SurfDoc architecture diagram"]
+::
+
+## Conclusion
+
+This completes the basic fixture covering all 8 block types plus front matter and markdown.
