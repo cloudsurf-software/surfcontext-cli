@@ -2,8 +2,13 @@
 name = "surf-parse"
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Parser for the SurfDoc format — markdown superset with typed block directives"
+repository = "https://github.com/cloudsurf-software/surfcontext-cli"
+homepage = "https://surfcontext.org"
+keywords = ["surfdoc", "markdown", "parser", "document", "accessibility"]
+categories = ["parser-implementations", "text-processing", "web-programming"]
+readme = "README.md"
 
 [features]
 default = ["terminal"]
