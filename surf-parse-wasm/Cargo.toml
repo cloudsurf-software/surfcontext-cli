@@ -1,0 +1,15 @@
+[package]
+name = "surf-parse-wasm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "WASM bindings for surf-parse — run the SurfDoc parser in any browser"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+surf-parse = { path = "../surf-parse", default-features = false }
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+serde_json = "1"

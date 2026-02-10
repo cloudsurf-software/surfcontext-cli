@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "surf-parse"]
+members = [".", "surf-parse", "surf-parse-wasm"]
 resolver = "3"
 
 [package]

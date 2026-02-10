@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SurfDoc Live Editor</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --border: #2a2a3a;
+            --border-subtle: #1e1e2e;
+            --text: #e8e8f0;
+            --text-dim: #8888a0;
+            --text-muted: #5a5a72;
+            --accent: #3b82f6;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .container { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; height: 100vh; }
+        .header { grid-column: 1 / -1; padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 1rem; }
+        .header h1 { font-size: 1rem; font-weight: 600; }
+        .header .badge { font-size: 0.7rem; padding: 0.15rem 0.5rem; background: rgba(99,102,241,0.15); color: #6366f1; border-radius: 4px; }
+        .header .stats { margin-left: auto; font-size: 0.75rem; color: var(--text-muted); }
+        .editor-pane { border-right: 1px solid var(--border-subtle); display: flex; flex-direction: column; }
+        .pane-label { padding: 0.5rem 1rem; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border-subtle); background: var(--bg-card); }
+        textarea {
+            flex: 1; background: var(--bg); color: var(--text); border: none; padding: 1rem;
+            font-family: "SF Mono", "Fira Code", monospace; font-size: 0.85rem; line-height: 1.6;
+            resize: none; outline: none; tab-size: 2;
+        }
+        .preview-pane { overflow-y: auto; }
+        .preview-content { padding: 1.5rem; }
+        /* Diagnostics bar */
+        .diagnostics { grid-column: 1 / -1; padding: 0.5rem 1rem; font-size: 0.75rem; font-family: monospace; border-top: 1px solid var(--border-subtle); background: var(--bg-card); color: var(--text-muted); max-height: 5rem; overflow-y: auto; }
+        .diag-error { color: #ef4444; }
+        .diag-warning { color: #f59e0b; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SurfDoc Live Editor</h1>
+            <span class="badge">WASM</span>
+            <span class="stats" id="stats">Loading...</span>
+        </div>
+        <div class="editor-pane">
+            <div class="pane-label">Source (.surf)</div>
+            <textarea id="source" spellcheck="false">---
+title: "Hello SurfDoc"
+type: doc
+status: active
+---
+
+# Welcome to SurfDoc
+
+This is a **live editor** powered by `surf-parse` compiled to WebAssembly.
+Every keystroke runs the full Rust parser in your browser.
+
+::callout[type=tip]
+Edit the left pane and watch the right pane update instantly.
+No server required — the parser runs 100% client-side.
+::
+
+## Key Metrics
+
+::metric[label="Parse Time" value="<1ms" trend=up]
+::
+
+::metric[label="WASM Size" value="641KB" trend=flat]
+::
+
+## Architecture
+
+::columns
+:::column
+**Client-Side**
+
+- surf-parse (Rust → WASM)
+- Zero network requests
+- Works offline
+:::
+:::column
+**Rendering**
+
+- HTML with surfdoc-* classes
+- Embedded CSS dark theme
+- All 11 block types
+:::
+::
+
+## Task List
+
+::tasks
+- [x] Build surf-parse in Rust
+- [x] Compile to WASM
+- [x] Create live editor demo
+- [ ] Ship SurfBrowser
+::
+
+::quote[by="Alan Kay"]
+The best way to predict the future is to invent it.
+::
+
+## Code Example
+
+::code[lang=rust]
+let result = surf_parse::parse(input);
+let html = result.doc.to_html();
+::
+
+::decision[status=accepted date="2026-02-10"]
+SurfDoc will be the universal document format for CloudSurf.
+All products converge on this single artifact type.
+::
+</textarea>
+        </div>
+        <div class="preview-pane">
+            <div class="pane-label">Preview (rendered HTML)</div>
+            <div class="preview-content surfdoc" id="preview"></div>
+        </div>
+        <div class="diagnostics" id="diagnostics"></div>
+    </div>
+
+    <!-- SurfDoc embedded CSS (same as surf build output) -->
+    <style>
+        .surfdoc { line-height: 1.7; }
+        .surfdoc h1 { font-size: 1.875rem; font-weight: 700; margin: 2rem 0 1rem; letter-spacing: -0.025em; }
+        .surfdoc h2 { font-size: 1.5rem; font-weight: 600; margin: 1.75rem 0 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+        .surfdoc h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+        .surfdoc p { margin: 0.75rem 0; }
+        .surfdoc a { color: var(--accent); }
+        .surfdoc strong { font-weight: 600; color: #fff; }
+        .surfdoc em { color: var(--text-dim); }
+        .surfdoc ul, .surfdoc ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+        .surfdoc li { margin: 0.25rem 0; }
+        .surfdoc li::marker { color: var(--text-muted); }
+        .surfdoc blockquote { border-left: 3px solid var(--accent); padding: 0.5rem 1rem; margin: 1rem 0; background: rgba(59,130,246,0.05); border-radius: 0 6px 6px 0; }
+        .surfdoc code { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.15em 0.4em; border-radius: 4px; }
+        .surfdoc pre { background: #0d1117 !important; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 1rem 0; }
+        .surfdoc pre code { background: transparent; padding: 0; font-size: 0.8rem; line-height: 1.6; }
+
+        .surfdoc-callout { border-left: 3px solid; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; background: var(--bg-card); }
+        .surfdoc-callout strong { display: block; margin-bottom: 0.25rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+        .surfdoc-callout p { margin: 0; }
+        .surfdoc-callout-info { border-color: #3b82f6; }
+        .surfdoc-callout-info strong { color: #3b82f6; }
+        .surfdoc-callout-warning { border-color: #f59e0b; }
+        .surfdoc-callout-warning strong { color: #f59e0b; }
+        .surfdoc-callout-danger { border-color: #ef4444; }
+        .surfdoc-callout-danger strong { color: #ef4444; }
+        .surfdoc-callout-tip { border-color: #22c55e; }
+        .surfdoc-callout-tip strong { color: #22c55e; }
+        .surfdoc-callout-note { border-color: #06b6d4; }
+        .surfdoc-callout-note strong { color: #06b6d4; }
+        .surfdoc-callout-success { border-color: #22c55e; background: rgba(34,197,94,0.05); }
+        .surfdoc-callout-success strong { color: #22c55e; }
+
+        .surfdoc-data { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.875rem; border: 1px solid var(--border-subtle); border-radius: 8px; overflow: hidden; }
+        .surfdoc-data thead { background: var(--bg-card); }
+        .surfdoc-data th { text-align: left; padding: 0.625rem 0.75rem; font-weight: 600; color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--border); }
+        .surfdoc-data td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-subtle); }
+
+        .surfdoc-code { background: #0d1117; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 1rem 0; font-size: 0.8rem; line-height: 1.6; }
+        .surfdoc-code code { background: transparent; padding: 0; font-family: "SF Mono", "Fira Code", monospace; }
+
+        .surfdoc-tasks { list-style: none; padding-left: 0; margin: 1rem 0; }
+        .surfdoc-tasks li { display: flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0.75rem; margin: 0.125rem 0; border-radius: 6px; font-size: 0.9rem; }
+        .surfdoc-tasks li:hover { background: rgba(255,255,255,0.03); }
+        .surfdoc-tasks input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+        .surfdoc-decision { border-left: 3px solid; padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; background: var(--bg-card); }
+        .surfdoc-decision .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.5rem; }
+        .surfdoc-decision p { margin: 0.5rem 0 0; }
+        .surfdoc-decision-accepted { border-color: #22c55e; }
+        .surfdoc-decision-accepted .status { background: rgba(34,197,94,0.15); color: #22c55e; }
+        .surfdoc-decision-proposed { border-color: #f59e0b; }
+        .surfdoc-decision-proposed .status { background: rgba(245,158,11,0.15); color: #f59e0b; }
+
+        .surfdoc-metric { display: inline-flex; align-items: baseline; gap: 0.5rem; padding: 0.625rem 1rem; margin: 0.5rem 0.5rem 0.5rem 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 8px; }
+        .surfdoc-metric .label { color: var(--text-dim); font-size: 0.8rem; font-weight: 500; }
+        .surfdoc-metric .value { font-size: 1.25rem; font-weight: 700; color: #fff; }
+        .surfdoc-metric .trend { font-size: 1rem; }
+        .surfdoc-metric .trend.up { color: #22c55e; }
+        .surfdoc-metric .trend.flat { color: var(--text-muted); }
+
+        .surfdoc-summary { border-left: 3px solid var(--accent); padding: 0.75rem 1rem; margin: 1rem 0; background: rgba(59,130,246,0.04); border-radius: 0 8px 8px 0; font-style: italic; color: var(--text-dim); }
+        .surfdoc-figure { margin: 1.5rem 0; text-align: center; }
+        .surfdoc-figure figcaption { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+        .surfdoc-unknown { padding: 0.75rem 1rem; margin: 1rem 0; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 8px; color: var(--text-dim); }
+
+        .surfdoc-columns { display: grid; gap: 1.5rem; margin: 1rem 0; }
+        .surfdoc-columns[data-cols="2"] { grid-template-columns: repeat(2, 1fr); }
+        .surfdoc-columns[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
+        .surfdoc-column { min-width: 0; }
+
+        .surfdoc-quote { border-left: 3px solid var(--text-muted); padding: 0.75rem 1.25rem; margin: 1.5rem 0; }
+        .surfdoc-quote blockquote { border: none; padding: 0; margin: 0; background: none; font-size: 1.1rem; font-style: italic; color: var(--text-dim); }
+        .surfdoc-quote .attribution { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+        .surfdoc-quote .attribution::before { content: "\2014 "; }
+
+        .surfdoc-tabs { margin: 1rem 0; border: 1px solid var(--border-subtle); border-radius: 8px; overflow: hidden; }
+        .surfdoc-tabs nav { display: flex; background: var(--bg-card); border-bottom: 1px solid var(--border-subtle); }
+        .surfdoc-tabs nav button { padding: 0.5rem 1rem; background: none; border: none; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; border-bottom: 2px solid transparent; }
+        .surfdoc-tabs nav button:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+        .surfdoc-tabs nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .surfdoc-tabs .tab-panel { padding: 1rem; display: none; }
+        .surfdoc-tabs .tab-panel.active { display: block; }
+    </style>
+
+    <script type="module">
+        import init, { render_html, parse, validate } from './pkg/surf_parse_wasm.js';
+
+        await init();
+
+        const source = document.getElementById('source');
+        const preview = document.getElementById('preview');
+        const diagnostics = document.getElementById('diagnostics');
+        const stats = document.getElementById('stats');
+
+        function update() {
+            const input = source.value;
+            const t0 = performance.now();
+            const html = render_html(input);
+            const t1 = performance.now();
+
+            preview.innerHTML = html;
+
+            // Re-init tab switching after innerHTML update
+            document.querySelectorAll('.surfdoc-tabs').forEach(t => {
+                t.querySelectorAll('.tab-btn').forEach(b => {
+                    b.onclick = () => {
+                        t.querySelectorAll('.tab-btn,.tab-panel').forEach(e => e.classList.remove('active'));
+                        b.classList.add('active');
+                        t.querySelector('.tab-panel[data-tab="' + b.dataset.tab + '"]').classList.add('active');
+                    };
+                });
+            });
+
+            // Parse diagnostics
+            const diagJson = validate(input);
+            const diags = JSON.parse(diagJson);
+            if (diags.length === 0) {
+                diagnostics.innerHTML = '<span style="color: #22c55e;">No diagnostics</span>';
+            } else {
+                diagnostics.innerHTML = diags.map(d => {
+                    const cls = d.severity === 'Error' ? 'diag-error' : 'diag-warning';
+                    const loc = d.span ? `:${d.span.start_line}` : '';
+                    const code = d.code ? `[${d.code}] ` : '';
+                    return `<div class="${cls}">${loc} ${code}${d.message}</div>`;
+                }).join('');
+            }
+
+            // Parse JSON for block count
+            const parsed = JSON.parse(parse(input));
+            const blockCount = parsed.doc.blocks.length;
+            stats.textContent = `${(t1 - t0).toFixed(1)}ms | ${blockCount} blocks | ${input.length} chars`;
+        }
+
+        source.addEventListener('input', update);
+        update();
+    </script>
+</body>
+</html>

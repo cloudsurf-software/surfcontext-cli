@@ -5,8 +5,12 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Parser for the SurfDoc format — markdown superset with typed block directives"
 
+[features]
+default = ["terminal"]
+terminal = ["colored"]
+
 [dependencies]
-colored = "3"
+colored = { version = "3", optional = true }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

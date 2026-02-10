@@ -19,6 +19,7 @@ pub mod inline;
 pub mod parse;
 pub mod render_html;
 pub mod render_md;
+#[cfg(feature = "terminal")]
 pub mod render_term;
 pub mod types;
 pub mod validate;
@@ -46,6 +47,7 @@ impl SurfDoc {
     }
 
     /// Render this document as ANSI-colored terminal text.
+    #[cfg(feature = "terminal")]
     pub fn to_terminal(&self) -> String {
         render_term::to_terminal(self)
     }
