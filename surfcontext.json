@@ -1,0 +1,32 @@
+{
+  "version": "3.0",
+  "platforms": ["claude"],
+  "canonical": {
+    "rootContext": "CONTEXT.md",
+    "agentsDir": ".context/agents",
+    "docsDir": ".context/docs",
+    "skillsDir": ".context/skills",
+    "guidesDir": ".context/guides"
+  },
+  "generation": {
+    "claude": {
+      "rootContext": "CLAUDE.md",
+      "agentsDir": ".claude/agents",
+      "docsDir": ".claude/docs",
+      "method": "symlink",
+      "rootContextMethod": "sed-copy"
+    }
+  },
+  "discoveryOrder": [
+    "CONTEXT.md",
+    "surfcontext.json",
+    ".context/docs/",
+    ".context/agents/"
+  ],
+  "ipSafety": {
+    "enabled": true,
+    "owner": "CloudSurf Software LLC",
+    "noAiCoAuthor": true,
+    "noSecrets": true
+  }
+}
