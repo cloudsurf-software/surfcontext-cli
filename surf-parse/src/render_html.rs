@@ -261,6 +261,9 @@ pub fn to_html_page(doc: &SurfDoc, config: &PageConfig) -> String {
         ));
     }
 
+    // Extract favicon from ::site properties
+    append_favicon_links(doc, &mut meta_extra);
+
     format!(
         r#"<!-- Built with SurfDoc — source: {source_path} -->
 <!DOCTYPE html>
@@ -530,6 +533,39 @@ fn slugify(s: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// Append a favicon `<link>` tag to meta_extra based on file extension.
+fn append_favicon_link(fav: &str, meta_extra: &mut String) {
+    let fav_escaped = escape_html(fav);
+    if fav.ends_with(".svg") {
+        meta_extra.push_str(&format!(
+            "\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"{}\">",
+            fav_escaped
+        ));
+    } else if fav.ends_with(".ico") {
+        meta_extra.push_str(&format!(
+            "\n    <link rel=\"icon\" href=\"{}\" sizes=\"any\">",
+            fav_escaped
+        ));
+    } else if fav.ends_with(".png") {
+        meta_extra.push_str(&format!(
+            "\n    <link rel=\"icon\" type=\"image/png\" href=\"{}\">",
+            fav_escaped
+        ));
+    }
+}
+
+/// Scan a SurfDoc's ::site blocks for a favicon property and append link tags.
+fn append_favicon_links(doc: &SurfDoc, meta_extra: &mut String) {
+    for block in &doc.blocks {
+        if let Block::Site { properties, .. } = block {
+            if let Some(fav) = properties.iter().find(|p| p.key == "favicon") {
+                append_favicon_link(&fav.value, meta_extra);
+                return;
+            }
+        }
+    }
 }
 
 /// Render nav logo — supports image paths (.png, .svg, .jpg, .webp) and plain text.
@@ -1216,6 +1252,11 @@ pub fn render_site_page(
             "\n    <link rel=\"canonical\" href=\"{}\">",
             escape_html(url)
         ));
+    }
+
+    // Extract favicon from site properties
+    if let Some(fav) = site.properties.iter().find(|p| p.key == "favicon") {
+        append_favicon_link(&fav.value, &mut meta_extra);
     }
 
     format!(
