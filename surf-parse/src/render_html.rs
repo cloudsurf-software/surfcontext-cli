@@ -16,7 +16,7 @@ fn render_markdown(content: &str) -> String {
     let parser = pulldown_cmark::Parser::new_ext(content, options);
     let mut html_output = String::new();
     pulldown_cmark::html::push_html(&mut html_output, parser);
-    html_output
+    add_heading_ids(&html_output)
 }
 
 /// Configuration for full-page HTML rendering with SurfDoc discovery metadata.
@@ -167,10 +167,7 @@ pub fn to_html(doc: &SurfDoc) -> String {
             let effective_logo = logo.as_deref().or(site_name.as_deref());
             let mut html = String::from("<nav class=\"surfdoc-nav\" role=\"navigation\" aria-label=\"Page navigation\">");
             if let Some(logo_text) = effective_logo {
-                html.push_str(&format!(
-                    "<span class=\"surfdoc-nav-logo\">{}</span>",
-                    escape_html(logo_text),
-                ));
+                html.push_str(&render_nav_logo(logo_text));
             }
             html.push_str("<div class=\"surfdoc-nav-links\">");
             for item in items {
@@ -203,7 +200,7 @@ pub fn to_html(doc: &SurfDoc) -> String {
         let rendered = render_block(block);
 
         // Detect section boundaries: h1 or h2 starts a new visual section
-        let starts_section = rendered.starts_with("<h1>") || rendered.starts_with("<h2>");
+        let starts_section = rendered.starts_with("<h1") || rendered.starts_with("<h2");
         if starts_section {
             if in_section {
                 parts.push("</section>".to_string());
@@ -322,7 +319,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 /* Navigation bar */
 .surfdoc-nav { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; background: var(--bg-card); border-bottom: 1px solid var(--border-subtle); position: sticky; top: 0; z-index: 100; width: 100vw; margin-left: calc(-50vw + 50%); margin-top: -2rem; margin-bottom: 1rem; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-.surfdoc-nav-logo { font-weight: 700; color: #fff; font-size: 1rem; margin-right: auto; white-space: nowrap; }
+.surfdoc-nav-logo { font-weight: 700; color: #fff; font-size: 1rem; margin-right: auto; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; }
+.surfdoc-nav-logo:hover { color: #fff; text-decoration: none; }
+.surfdoc-nav-logo-img { height: 1.75rem; width: auto; border-radius: 4px; }
 .surfdoc-nav-links { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
 .surfdoc-nav-links a { color: var(--text-dim); text-decoration: none; font-size: 0.875rem; padding: 0.25rem 0.625rem; border-radius: 6px; transition: color 0.15s, background 0.15s; display: inline-flex; align-items: center; gap: 0.375rem; }
 .surfdoc-nav-links a:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
@@ -519,6 +518,70 @@ fn escape_html(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Slugify text for use as an HTML id attribute.
+/// "Two apps in one." → "two-apps-in-one"
+fn slugify(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Render nav logo — supports image paths (.png, .svg, .jpg, .webp) and plain text.
+fn render_nav_logo(logo: &str) -> String {
+    let is_image = logo.ends_with(".png")
+        || logo.ends_with(".svg")
+        || logo.ends_with(".jpg")
+        || logo.ends_with(".jpeg")
+        || logo.ends_with(".webp")
+        || logo.starts_with("http://")
+        || logo.starts_with("https://");
+    if is_image {
+        format!(
+            "<a href=\"/\" class=\"surfdoc-nav-logo\"><img src=\"{}\" alt=\"Logo\" class=\"surfdoc-nav-logo-img\"></a>",
+            escape_html(logo),
+        )
+    } else {
+        format!(
+            "<span class=\"surfdoc-nav-logo\">{}</span>",
+            escape_html(logo),
+        )
+    }
+}
+
+/// Post-process HTML to add id attributes to heading tags.
+/// Turns `<h2>Two apps in one.</h2>` into `<h2 id="two-apps-in-one">Two apps in one.</h2>`
+fn add_heading_ids(html: &str) -> String {
+    let mut result = html.to_string();
+    for level in 1..=6 {
+        let open = format!("<h{}>", level);
+        let close = format!("</h{}>", level);
+        while let Some(start) = result.find(&open) {
+            if let Some(end) = result[start..].find(&close) {
+                let text_start = start + open.len();
+                let text_end = start + end;
+                // Strip HTML tags from inner text for slugification
+                let inner = &result[text_start..text_end];
+                let plain: String = inner.chars().fold((String::new(), false), |(mut s, in_tag), c| {
+                    if c == '<' { (s, true) }
+                    else if c == '>' { (s, false) }
+                    else if !in_tag { s.push(c); (s, false) }
+                    else { (s, true) }
+                }).0;
+                let slug = slugify(&plain);
+                let replacement = format!("<h{} id=\"{}\">", level, slug);
+                result = format!("{}{}{}", &result[..start], replacement, &result[text_start..]);
+            } else {
+                break;
+            }
+        }
+    }
+    result
 }
 
 fn render_block(block: &Block) -> String {
@@ -911,10 +974,7 @@ fn render_block(block: &Block) -> String {
         Block::Nav { items, logo, .. } => {
             let mut html = String::from("<nav class=\"surfdoc-nav\" role=\"navigation\" aria-label=\"Page navigation\">");
             if let Some(logo_text) = logo {
-                html.push_str(&format!(
-                    "<span class=\"surfdoc-nav-logo\">{}</span>",
-                    escape_html(logo_text),
-                ));
+                html.push_str(&render_nav_logo(logo_text));
             }
             html.push_str("<div class=\"surfdoc-nav-links\">");
             for item in items {
