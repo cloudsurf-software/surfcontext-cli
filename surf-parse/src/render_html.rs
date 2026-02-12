@@ -6,6 +6,18 @@
 
 use crate::types::{Block, CalloutType, DecisionStatus, StyleProperty, SurfDoc, Trend};
 
+/// Render a markdown string to HTML using pulldown-cmark with GFM extensions.
+fn render_markdown(content: &str) -> String {
+    let mut options = pulldown_cmark::Options::empty();
+    options.insert(pulldown_cmark::Options::ENABLE_TABLES);
+    options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
+    options.insert(pulldown_cmark::Options::ENABLE_TASKLISTS);
+    let parser = pulldown_cmark::Parser::new_ext(content, options);
+    let mut html_output = String::new();
+    pulldown_cmark::html::push_html(&mut html_output, parser);
+    html_output
+}
+
 /// Configuration for full-page HTML rendering with SurfDoc discovery metadata.
 #[derive(Debug, Clone)]
 pub struct PageConfig {
@@ -38,8 +50,31 @@ impl Default for PageConfig {
 ///
 /// The output is a sequence of semantic HTML elements with `surfdoc-*` CSS
 /// classes. No `<html>`, `<head>`, or `<body>` wrapper is added.
+/// If a `::site` block sets an accent color, a `<style>` override is injected.
 pub fn to_html(doc: &SurfDoc) -> String {
     let mut parts: Vec<String> = Vec::new();
+    let mut css_overrides = String::new();
+
+    // Scan for site-level CSS variable overrides before rendering blocks.
+    for block in &doc.blocks {
+        if let Block::Site { properties, .. } = block {
+            for prop in properties {
+                match prop.key.as_str() {
+                    "accent" => css_overrides.push_str(&format!(
+                        "--accent: {};", escape_html(&prop.value)
+                    )),
+                    "font" => css_overrides.push_str(&format!(
+                        "--font: {};", escape_html(&prop.value)
+                    )),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if !css_overrides.is_empty() {
+        parts.push(format!("<style>:root {{ {} }}</style>", css_overrides));
+    }
 
     for block in &doc.blocks {
         parts.push(render_block(block));
@@ -327,12 +362,7 @@ fn escape_html(s: &str) -> String {
 
 fn render_block(block: &Block) -> String {
     match block {
-        Block::Markdown { content, .. } => {
-            let parser = pulldown_cmark::Parser::new(content);
-            let mut html_output = String::new();
-            pulldown_cmark::html::push_html(&mut html_output, parser);
-            html_output
-        }
+        Block::Markdown { content, .. } => render_markdown(content),
 
         Block::Callout {
             callout_type,
@@ -342,13 +372,12 @@ fn render_block(block: &Block) -> String {
         } => {
             let type_str = callout_type_str(*callout_type);
             let role = if matches!(callout_type, CalloutType::Danger) { "alert" } else { "note" };
-            let title_html = match title {
-                Some(t) => format!(": {}", escape_html(t)),
-                None => String::new(),
+            let heading = match title {
+                Some(t) => format!("{}: {}", capitalize(type_str), escape_html(t)),
+                None => capitalize(type_str).to_string(),
             };
             format!(
-                "<div class=\"surfdoc-callout surfdoc-callout-{type_str}\" role=\"{role}\"><strong>{}</strong>{title_html}<p>{}</p></div>",
-                capitalize(type_str),
+                "<div class=\"surfdoc-callout surfdoc-callout-{type_str}\" role=\"{role}\"><strong>{heading}</strong><p>{}</p></div>",
                 escape_html(content),
             )
         }
@@ -510,9 +539,7 @@ fn render_block(block: &Block) -> String {
             for (i, tab) in tabs.iter().enumerate() {
                 let active = if i == 0 { " active" } else { "" };
                 let hidden = if i == 0 { "" } else { " hidden" };
-                let parser = pulldown_cmark::Parser::new(&tab.content);
-                let mut content_html = String::new();
-                pulldown_cmark::html::push_html(&mut content_html, parser);
+                let content_html = render_markdown(&tab.content);
                 html.push_str(&format!(
                     "<div class=\"tab-panel{}\" role=\"tabpanel\" id=\"surfdoc-panel-{}\" aria-labelledby=\"surfdoc-tab-{}\" tabindex=\"0\"{}>{}</div>",
                     active, i, i, hidden, content_html
@@ -530,9 +557,7 @@ fn render_block(block: &Block) -> String {
                 count
             );
             for col in columns {
-                let parser = pulldown_cmark::Parser::new(&col.content);
-                let mut col_html = String::new();
-                pulldown_cmark::html::push_html(&mut col_html, parser);
+                let col_html = render_markdown(&col.content);
                 html.push_str(&format!(
                     "<div class=\"surfdoc-column\">{}</div>",
                     col_html
@@ -1004,7 +1029,7 @@ mod tests {
         }]);
         let html = to_html(&doc);
         assert!(html.contains("class=\"surfdoc-callout surfdoc-callout-warning\""));
-        assert!(html.contains("<strong>Warning</strong>"));
+        assert!(html.contains("<strong>Warning: Caution</strong>"));
         assert!(html.contains("Be careful."));
     }
 
