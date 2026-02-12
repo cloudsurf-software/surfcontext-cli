@@ -271,6 +271,17 @@ fn validate_block(block: &Block, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
 
+        Block::Nav { items, span, .. } => {
+            if items.is_empty() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    message: "Nav block has no navigation items".into(),
+                    span: Some(*span),
+                    code: Some("V150".into()),
+                });
+            }
+        }
+
         // Markdown, Tasks, Summary, Columns, Style, Site, Unknown — no required-field validation
         _ => {}
     }

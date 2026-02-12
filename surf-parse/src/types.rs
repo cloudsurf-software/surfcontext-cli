@@ -227,6 +227,13 @@ pub enum Block {
         label: String,
         href: String,
         primary: bool,
+        icon: Option<String>,
+        span: Span,
+    },
+    /// Navigation bar with links.
+    Nav {
+        items: Vec<NavItem>,
+        logo: Option<String>,
         span: Span,
     },
     /// Hero image visual.
@@ -352,6 +359,14 @@ pub struct StyleProperty {
 pub struct FaqItem {
     pub question: String,
     pub answer: String,
+}
+
+/// A navigation link within a `Nav` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavItem {
+    pub label: String,
+    pub href: String,
+    pub icon: Option<String>,
 }
 
 /// Inline extension found within text content.

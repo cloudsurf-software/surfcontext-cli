@@ -15,6 +15,7 @@
 pub mod attrs;
 pub mod blocks;
 pub mod error;
+pub mod icons;
 pub mod inline;
 pub mod parse;
 pub mod render_html;

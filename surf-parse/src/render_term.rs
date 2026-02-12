@@ -381,6 +381,19 @@ fn render_block(block: &Block) -> String {
             }
         }
 
+        Block::Nav { items, logo, .. } => {
+            let header = if let Some(l) = logo {
+                format!("{} ", l.bold())
+            } else {
+                String::new()
+            };
+            let links: Vec<String> = items
+                .iter()
+                .map(|item| format!("{} ({})", item.label.blue(), item.href.dimmed()))
+                .collect();
+            format!("{header}{}", links.join(" | "))
+        }
+
         Block::Unknown {
             name, content, ..
         } => {

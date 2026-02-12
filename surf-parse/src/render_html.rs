@@ -4,6 +4,7 @@
 //! rendered through `pulldown-cmark`. All other content is HTML-escaped to
 //! prevent XSS.
 
+use crate::icons::get_icon;
 use crate::types::{Block, CalloutType, DecisionStatus, StyleProperty, SurfDoc, Trend};
 
 /// Render a markdown string to HTML using pulldown-cmark with GFM extensions.
@@ -51,33 +52,173 @@ impl Default for PageConfig {
 /// The output is a sequence of semantic HTML elements with `surfdoc-*` CSS
 /// classes. No `<html>`, `<head>`, or `<body>` wrapper is added.
 /// If a `::site` block sets an accent color, a `<style>` override is injected.
+/// A resolved font preset: CSS font stack + optional Google Fonts import URL.
+struct FontPreset {
+    stack: &'static str,
+    import: Option<&'static str>,
+}
+
+/// Resolve a font preset name to a CSS font stack and optional import.
+fn resolve_font_preset(name: &str) -> Option<FontPreset> {
+    match name.trim().to_lowercase().as_str() {
+        "system" | "sans" => Some(FontPreset {
+            stack: "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Oxygen, sans-serif",
+            import: None,
+        }),
+        "serif" | "editorial" => Some(FontPreset {
+            stack: "Georgia, \"Palatino Linotype\", \"Book Antiqua\", Palatino, serif",
+            import: None,
+        }),
+        "mono" | "monospace" | "technical" => Some(FontPreset {
+            stack: "\"SF Mono\", \"Fira Code\", \"Cascadia Code\", Menlo, Consolas, monospace",
+            import: None,
+        }),
+        "inter" => Some(FontPreset {
+            stack: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+            import: Some("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"),
+        }),
+        "montserrat" => Some(FontPreset {
+            stack: "'Montserrat', sans-serif",
+            import: Some("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap"),
+        }),
+        "jetbrains-mono" | "jetbrains" => Some(FontPreset {
+            stack: "'JetBrains Mono', monospace",
+            import: Some("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"),
+        }),
+        _ => None,
+    }
+}
+
+/// Apply font/style properties from a `StyleProperty` list to CSS overrides.
+/// Collects any required font imports into the `imports` set.
+fn apply_style_overrides(properties: &[StyleProperty], css_overrides: &mut String, imports: &mut Vec<&'static str>) {
+    for prop in properties {
+        match prop.key.as_str() {
+            "accent" => css_overrides.push_str(&format!(
+                "--accent: {};", escape_html(&prop.value)
+            )),
+            "font" => {
+                // Legacy: sets both heading and body
+                if let Some(preset) = resolve_font_preset(&prop.value) {
+                    css_overrides.push_str(&format!("--font-heading: {};", preset.stack));
+                    css_overrides.push_str(&format!("--font-body: {};", preset.stack));
+                    if let Some(url) = preset.import {
+                        if !imports.contains(&url) { imports.push(url); }
+                    }
+                }
+            }
+            "heading-font" => {
+                if let Some(preset) = resolve_font_preset(&prop.value) {
+                    css_overrides.push_str(&format!("--font-heading: {};", preset.stack));
+                    if let Some(url) = preset.import {
+                        if !imports.contains(&url) { imports.push(url); }
+                    }
+                }
+            }
+            "body-font" => {
+                if let Some(preset) = resolve_font_preset(&prop.value) {
+                    css_overrides.push_str(&format!("--font-body: {};", preset.stack));
+                    if let Some(url) = preset.import {
+                        if !imports.contains(&url) { imports.push(url); }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn to_html(doc: &SurfDoc) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut css_overrides = String::new();
+    let mut font_imports: Vec<&'static str> = Vec::new();
 
-    // Scan for site-level CSS variable overrides before rendering blocks.
+    // Scan for CSS variable overrides from ::site and ::style blocks.
     for block in &doc.blocks {
-        if let Block::Site { properties, .. } = block {
-            for prop in properties {
-                match prop.key.as_str() {
-                    "accent" => css_overrides.push_str(&format!(
-                        "--accent: {};", escape_html(&prop.value)
-                    )),
-                    "font" => css_overrides.push_str(&format!(
-                        "--font: {};", escape_html(&prop.value)
-                    )),
-                    _ => {}
-                }
-            }
+        match block {
+            Block::Site { properties, .. } => apply_style_overrides(properties, &mut css_overrides, &mut font_imports),
+            Block::Style { properties, .. } => apply_style_overrides(properties, &mut css_overrides, &mut font_imports),
+            _ => {}
         }
+    }
+
+    // Emit @import rules for Google Fonts (must come before other styles)
+    for url in &font_imports {
+        parts.push(format!("<style>@import url('{}');</style>", url));
     }
 
     if !css_overrides.is_empty() {
         parts.push(format!("<style>:root {{ {} }}</style>", css_overrides));
     }
 
+    // Extract site name for nav logo fallback
+    let site_name: Option<String> = doc.blocks.iter().find_map(|b| {
+        if let Block::Site { properties, .. } = b {
+            properties.iter().find(|p| p.key == "name").map(|p| p.value.clone())
+        } else {
+            None
+        }
+    });
+
+    // Render nav blocks first (before section wrapping)
     for block in &doc.blocks {
-        parts.push(render_block(block));
+        if let Block::Nav { items, logo, .. } = block {
+            // Use explicit logo, fall back to ::site name
+            let effective_logo = logo.as_deref().or(site_name.as_deref());
+            let mut html = String::from("<nav class=\"surfdoc-nav\" role=\"navigation\" aria-label=\"Page navigation\">");
+            if let Some(logo_text) = effective_logo {
+                html.push_str(&format!(
+                    "<span class=\"surfdoc-nav-logo\">{}</span>",
+                    escape_html(logo_text),
+                ));
+            }
+            html.push_str("<div class=\"surfdoc-nav-links\">");
+            for item in items {
+                let icon_html = item.icon
+                    .as_deref()
+                    .and_then(get_icon)
+                    .map(|svg| format!("<span class=\"surfdoc-icon\">{}</span> ", svg))
+                    .unwrap_or_default();
+                html.push_str(&format!(
+                    "<a href=\"{}\">{}{}</a>",
+                    escape_html(&item.href),
+                    icon_html,
+                    escape_html(&item.label),
+                ));
+            }
+            html.push_str("</div></nav>");
+            parts.push(html);
+        }
+    }
+
+    let mut in_section = false;
+    let mut section_index: usize = 0;
+
+    for block in &doc.blocks {
+        // Skip nav blocks — already rendered above
+        if matches!(block, Block::Nav { .. }) {
+            continue;
+        }
+
+        let rendered = render_block(block);
+
+        // Detect section boundaries: h1 or h2 starts a new visual section
+        let starts_section = rendered.starts_with("<h1>") || rendered.starts_with("<h2>");
+        if starts_section {
+            if in_section {
+                parts.push("</section>".to_string());
+            }
+            let alt = if section_index % 2 == 1 { " surfdoc-section-alt" } else { "" };
+            parts.push(format!("<section class=\"surfdoc-section{}\">", alt));
+            in_section = true;
+            section_index += 1;
+        }
+
+        parts.push(rendered);
+    }
+
+    if in_section {
+        parts.push("</section>".to_string());
     }
 
     parts.join("\n")
@@ -165,10 +306,13 @@ const SURFDOC_CSS: &str = r#"
     --text-dim: #8888a0;
     --text-muted: #5a5a72;
     --accent: #3b82f6;
+    --bg-alt: #161B22;
+    --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, sans-serif; -webkit-font-smoothing: antialiased; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -176,7 +320,24 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 /* Layout */
 .surfdoc { max-width: 48rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; line-height: 1.7; }
 
+/* Navigation bar */
+.surfdoc-nav { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; background: var(--bg-card); border-bottom: 1px solid var(--border-subtle); position: sticky; top: 0; z-index: 100; width: 100vw; margin-left: calc(-50vw + 50%); margin-top: -2rem; margin-bottom: 1rem; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.surfdoc-nav-logo { font-weight: 700; color: #fff; font-size: 1rem; margin-right: auto; white-space: nowrap; }
+.surfdoc-nav-links { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+.surfdoc-nav-links a { color: var(--text-dim); text-decoration: none; font-size: 0.875rem; padding: 0.25rem 0.625rem; border-radius: 6px; transition: color 0.15s, background 0.15s; display: inline-flex; align-items: center; gap: 0.375rem; }
+.surfdoc-nav-links a:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
+
+/* Inline icons */
+.surfdoc-icon { display: inline-flex; align-items: center; vertical-align: middle; line-height: 0; }
+.surfdoc-icon svg { width: 1em; height: 1em; }
+
+/* Sections — alternating backgrounds */
+.surfdoc-section { padding: 2rem 0; }
+.surfdoc-section-alt { background: var(--bg-alt, #161B22); width: 100vw; margin-left: calc(-50vw + 50%); padding: 2rem calc(50vw - 50%); }
+.surfdoc-section h2 { margin-top: 0; }
+
 /* Typography */
+.surfdoc h1, .surfdoc h2, .surfdoc h3, .surfdoc h4 { font-family: var(--font-heading); }
 .surfdoc h1 { font-size: 1.875rem; font-weight: 700; margin: 2rem 0 1rem; letter-spacing: -0.025em; }
 .surfdoc h2 { font-size: 1.5rem; font-weight: 600; margin: 1.75rem 0 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-subtle); }
 .surfdoc h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
@@ -298,12 +459,12 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .surfdoc-quote .attribution { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); font-style: normal; }
 .surfdoc-quote .attribution::before { content: "— "; }
 
-/* CTA buttons */
-.surfdoc-cta { display: inline-block; padding: 0.625rem 1.5rem; margin: 0.5rem 0.5rem 0.5rem 0; border-radius: 8px; font-weight: 600; font-size: 0.95rem; text-decoration: none; transition: all 0.15s; cursor: pointer; }
-.surfdoc-cta-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
-.surfdoc-cta-primary:hover { background: #2563eb; text-decoration: none; }
-.surfdoc-cta-secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
-.surfdoc-cta-secondary:hover { background: var(--bg-hover); text-decoration: none; }
+/* CTA buttons — use a.surfdoc-cta to beat .surfdoc a specificity */
+a.surfdoc-cta { display: inline-block; padding: 0.625rem 1.5rem; margin: 0.5rem 0.5rem 0.5rem 0; border-radius: 8px; font-weight: 600; font-size: 0.95rem; text-decoration: none; transition: all 0.15s; cursor: pointer; }
+a.surfdoc-cta-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+a.surfdoc-cta-primary:hover { background: #2563eb; color: #fff; text-decoration: none; }
+a.surfdoc-cta-secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+a.surfdoc-cta-secondary:hover { background: var(--bg-hover); color: var(--accent); text-decoration: none; }
 
 /* Hero image */
 .surfdoc-hero-image { margin: 2rem 0; text-align: center; }
@@ -595,13 +756,20 @@ fn render_block(block: &Block) -> String {
             label,
             href,
             primary,
+            icon,
             ..
         } => {
             let class = if *primary { "surfdoc-cta surfdoc-cta-primary" } else { "surfdoc-cta surfdoc-cta-secondary" };
+            let icon_html = icon
+                .as_deref()
+                .and_then(get_icon)
+                .map(|svg| format!("<span class=\"surfdoc-icon\">{}</span> ", svg))
+                .unwrap_or_default();
             format!(
-                "<a class=\"{}\" href=\"{}\">{}</a>",
+                "<a class=\"{}\" href=\"{}\">{}{}</a>",
                 class,
                 escape_html(href),
+                icon_html,
                 escape_html(label),
             )
         }
@@ -737,6 +905,32 @@ fn render_block(block: &Block) -> String {
                 html.push_str(&render_block(child));
             }
             html.push_str("</section>");
+            html
+        }
+
+        Block::Nav { items, logo, .. } => {
+            let mut html = String::from("<nav class=\"surfdoc-nav\" role=\"navigation\" aria-label=\"Page navigation\">");
+            if let Some(logo_text) = logo {
+                html.push_str(&format!(
+                    "<span class=\"surfdoc-nav-logo\">{}</span>",
+                    escape_html(logo_text),
+                ));
+            }
+            html.push_str("<div class=\"surfdoc-nav-links\">");
+            for item in items {
+                let icon_html = item.icon
+                    .as_deref()
+                    .and_then(get_icon)
+                    .map(|svg| format!("<span class=\"surfdoc-icon\">{}</span> ", svg))
+                    .unwrap_or_default();
+                html.push_str(&format!(
+                    "<a href=\"{}\">{}{}</a>",
+                    escape_html(&item.href),
+                    icon_html,
+                    escape_html(&item.label),
+                ));
+            }
+            html.push_str("</div></nav>");
             html
         }
 
@@ -1232,6 +1426,7 @@ mod tests {
             label: "Get Started".into(),
             href: "/signup".into(),
             primary: true,
+            icon: None,
             span: span(),
         }]);
         let html = to_html(&doc);
@@ -1246,6 +1441,7 @@ mod tests {
             label: "Learn More".into(),
             href: "https://example.com".into(),
             primary: false,
+            icon: None,
             span: span(),
         }]);
         let html = to_html(&doc);
@@ -1314,6 +1510,7 @@ mod tests {
             label: "<script>alert('xss')</script>".into(),
             href: "javascript:alert(1)".into(),
             primary: true,
+            icon: None,
             span: span(),
         }]);
         let html = to_html(&doc);
@@ -1406,6 +1603,7 @@ mod tests {
                     label: "Get Started".into(),
                     href: "/signup".into(),
                     primary: true,
+                    icon: None,
                     span: span(),
                 },
             ],
@@ -2002,5 +2200,375 @@ mod tests {
         };
         let html = render_site_page(&home, &site, &[], &PageConfig::default());
         assert!(html.contains("<title>My Site</title>"));
+    }
+
+    // -- Bug regression: CTA specificity fix (a.surfdoc-cta beats .surfdoc a) --
+
+    #[test]
+    fn css_cta_selectors_use_element_qualifier() {
+        // The CSS must use `a.surfdoc-cta-primary` (specificity 0-1-1) to beat
+        // `.surfdoc a` (also 0-1-1 but later in cascade). Without the `a` element
+        // qualifier, link color var(--accent) overrides the white button text.
+        assert!(SURFDOC_CSS.contains("a.surfdoc-cta-primary"));
+        assert!(SURFDOC_CSS.contains("a.surfdoc-cta-secondary"));
+        assert!(SURFDOC_CSS.contains("a.surfdoc-cta {"));
+        // Every occurrence of .surfdoc-cta-primary must be preceded by `a`
+        // (i.e. no bare `.surfdoc-cta-primary` without element qualifier)
+        for (i, _) in SURFDOC_CSS.match_indices(".surfdoc-cta-primary") {
+            if i == 0 || SURFDOC_CSS.as_bytes()[i - 1] != b'a' {
+                panic!("Found bare .surfdoc-cta-primary without 'a' element qualifier at byte {}", i);
+            }
+        }
+        for (i, _) in SURFDOC_CSS.match_indices(".surfdoc-cta-secondary") {
+            if i == 0 || SURFDOC_CSS.as_bytes()[i - 1] != b'a' {
+                panic!("Found bare .surfdoc-cta-secondary without 'a' element qualifier at byte {}", i);
+            }
+        }
+    }
+
+    #[test]
+    fn cta_renders_as_anchor_with_classes() {
+        // CTA must render as <a> tag with both base and variant class so the
+        // element-qualified CSS selectors match.
+        let doc = doc_with(vec![Block::Cta {
+            label: "Download".into(),
+            href: "https://example.com/dl".into(),
+            primary: true,
+            icon: None,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("<a "));
+        assert!(html.contains("class=\"surfdoc-cta surfdoc-cta-primary\""));
+        assert!(html.contains("href=\"https://example.com/dl\""));
+    }
+
+    #[test]
+    fn cta_primary_css_sets_white_text() {
+        // Verify the CSS actually sets color: #fff on primary buttons
+        assert!(SURFDOC_CSS.contains("a.surfdoc-cta-primary { background: var(--accent); color: #fff;"));
+    }
+
+    // -- Bug regression: alternating section backgrounds ----------------------
+
+    #[test]
+    fn sections_wrap_h1_boundaries() {
+        let doc = doc_with(vec![
+            Block::Markdown { content: "# Section One".into(), span: span() },
+            Block::Markdown { content: "Content under section one.".into(), span: span() },
+            Block::Markdown { content: "# Section Two".into(), span: span() },
+            Block::Markdown { content: "Content under section two.".into(), span: span() },
+        ]);
+        let html = to_html(&doc);
+        assert!(html.contains("<section class=\"surfdoc-section\">"));
+        assert!(html.contains("<section class=\"surfdoc-section surfdoc-section-alt\">"));
+        // Both sections should be closed
+        assert_eq!(html.matches("</section>").count(), 2);
+    }
+
+    #[test]
+    fn sections_wrap_h2_boundaries() {
+        let doc = doc_with(vec![
+            Block::Markdown { content: "## First".into(), span: span() },
+            Block::Markdown { content: "Body A.".into(), span: span() },
+            Block::Markdown { content: "## Second".into(), span: span() },
+            Block::Markdown { content: "Body B.".into(), span: span() },
+        ]);
+        let html = to_html(&doc);
+        assert!(html.contains("<section class=\"surfdoc-section\">"));
+        assert!(html.contains("surfdoc-section-alt"));
+        assert_eq!(html.matches("</section>").count(), 2);
+    }
+
+    #[test]
+    fn sections_alternate_correctly_across_three() {
+        let doc = doc_with(vec![
+            Block::Markdown { content: "# A".into(), span: span() },
+            Block::Markdown { content: "# B".into(), span: span() },
+            Block::Markdown { content: "# C".into(), span: span() },
+        ]);
+        let html = to_html(&doc);
+        // Section 0: no alt, Section 1: alt, Section 2: no alt
+        assert_eq!(html.matches("surfdoc-section-alt").count(), 1);
+        assert_eq!(html.matches("</section>").count(), 3);
+    }
+
+    #[test]
+    fn no_sections_without_headings() {
+        let doc = doc_with(vec![
+            Block::Markdown { content: "Just a paragraph.".into(), span: span() },
+            Block::Cta { label: "Go".into(), href: "/".into(), primary: true, icon: None, span: span() },
+        ]);
+        let html = to_html(&doc);
+        assert!(!html.contains("<section"));
+        assert!(!html.contains("</section>"));
+    }
+
+    #[test]
+    fn section_css_exists() {
+        assert!(SURFDOC_CSS.contains(".surfdoc-section {"));
+        assert!(SURFDOC_CSS.contains(".surfdoc-section-alt {"));
+    }
+
+    // -- Bug regression: to_html_page embeds CSS ------------------------------
+
+    #[test]
+    fn html_page_embeds_surfdoc_css() {
+        let doc = doc_with(vec![Block::Markdown {
+            content: "# Test".into(),
+            span: span(),
+        }]);
+        let config = PageConfig::default();
+        let html = to_html_page(&doc, &config);
+        // Must contain key CSS rules from SURFDOC_CSS
+        assert!(html.contains("<style>"));
+        assert!(html.contains("--bg:"));
+        assert!(html.contains(".surfdoc {"));
+        assert!(html.contains("a.surfdoc-cta-primary"));
+    }
+
+    #[test]
+    fn html_page_wraps_body_in_surfdoc_div() {
+        let doc = doc_with(vec![Block::Markdown {
+            content: "Hello".into(),
+            span: span(),
+        }]);
+        let config = PageConfig::default();
+        let html = to_html_page(&doc, &config);
+        assert!(html.contains("<article class=\"surfdoc\">"));
+    }
+
+    // -- Nav block tests --------------------------------------------------
+
+    #[test]
+    fn html_nav_renders_links() {
+        let doc = doc_with(vec![Block::Nav {
+            items: vec![
+                crate::types::NavItem { label: "Home".into(), href: "/".into(), icon: None },
+                crate::types::NavItem { label: "About".into(), href: "#about".into(), icon: None },
+            ],
+            logo: Some("MySite".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("class=\"surfdoc-nav\""));
+        assert!(html.contains("surfdoc-nav-logo"));
+        assert!(html.contains("MySite"));
+        assert!(html.contains("href=\"/\""));
+        assert!(html.contains("href=\"#about\""));
+        assert!(html.contains(">Home</a>"));
+        assert!(html.contains(">About</a>"));
+    }
+
+    #[test]
+    fn html_nav_renders_before_sections() {
+        let doc = doc_with(vec![
+            Block::Markdown { content: "# Section One".into(), span: span() },
+            Block::Nav {
+                items: vec![
+                    crate::types::NavItem { label: "Top".into(), href: "#top".into(), icon: None },
+                ],
+                logo: None,
+                span: span(),
+            },
+        ]);
+        let html = to_html(&doc);
+        let nav_pos = html.find("surfdoc-nav").unwrap();
+        let section_pos = html.find("surfdoc-section").unwrap();
+        assert!(nav_pos < section_pos, "Nav must render before sections");
+    }
+
+    #[test]
+    fn html_nav_uses_site_name_as_logo_fallback() {
+        let doc = doc_with(vec![
+            Block::Site {
+                domain: None,
+                properties: vec![StyleProperty { key: "name".into(), value: "Surf".into() }],
+                span: span(),
+            },
+            Block::Nav {
+                items: vec![
+                    crate::types::NavItem { label: "Docs".into(), href: "/docs".into(), icon: None },
+                ],
+                logo: None,
+                span: span(),
+            },
+        ]);
+        let html = to_html(&doc);
+        assert!(html.contains("surfdoc-nav-logo"));
+        assert!(html.contains("Surf"));
+    }
+
+    #[test]
+    fn html_nav_with_icons() {
+        let doc = doc_with(vec![Block::Nav {
+            items: vec![
+                crate::types::NavItem {
+                    label: "GitHub".into(),
+                    href: "https://github.com".into(),
+                    icon: Some("github".into()),
+                },
+            ],
+            logo: None,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("surfdoc-icon"));
+        assert!(html.contains("<svg"));
+        assert!(html.contains("GitHub</a>"));
+    }
+
+    #[test]
+    fn html_nav_escapes_xss() {
+        let doc = doc_with(vec![Block::Nav {
+            items: vec![
+                crate::types::NavItem {
+                    label: "<script>alert('x')</script>".into(),
+                    href: "javascript:alert(1)".into(),
+                    icon: None,
+                },
+            ],
+            logo: Some("<img onerror=alert(1)>".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("<img onerror"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn html_nav_css_exists() {
+        assert!(SURFDOC_CSS.contains(".surfdoc-nav {"));
+        assert!(SURFDOC_CSS.contains(".surfdoc-nav-logo"));
+        assert!(SURFDOC_CSS.contains(".surfdoc-nav-links"));
+        assert!(SURFDOC_CSS.contains(".surfdoc-icon"));
+    }
+
+    // -- Icon on CTA tests ------------------------------------------------
+
+    #[test]
+    fn html_cta_with_icon() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Download".into(),
+            href: "/dl".into(),
+            primary: true,
+            icon: Some("download".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("surfdoc-icon"));
+        assert!(html.contains("<svg"));
+        assert!(html.contains("Download</a>"));
+    }
+
+    #[test]
+    fn html_cta_unknown_icon_omitted() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Go".into(),
+            href: "/go".into(),
+            primary: true,
+            icon: Some("nonexistent-icon".into()),
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(!html.contains("surfdoc-icon"));
+        assert!(html.contains(">Go</a>"));
+    }
+
+    #[test]
+    fn html_cta_no_icon_no_svg() {
+        let doc = doc_with(vec![Block::Cta {
+            label: "Click".into(),
+            href: "/click".into(),
+            primary: false,
+            icon: None,
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(!html.contains("surfdoc-icon"));
+        assert!(!html.contains("<svg"));
+    }
+
+    // -- Font preset tests ------------------------------------------------
+
+    #[test]
+    fn font_presets_resolve() {
+        assert!(resolve_font_preset("system").unwrap().stack.contains("apple-system"));
+        assert!(resolve_font_preset("sans").unwrap().stack.contains("apple-system"));
+        assert!(resolve_font_preset("serif").unwrap().stack.contains("Georgia"));
+        assert!(resolve_font_preset("editorial").unwrap().stack.contains("Georgia"));
+        assert!(resolve_font_preset("mono").unwrap().stack.contains("Menlo"));
+        assert!(resolve_font_preset("monospace").unwrap().stack.contains("Menlo"));
+        assert!(resolve_font_preset("technical").unwrap().stack.contains("Menlo"));
+        assert!(resolve_font_preset("inter").unwrap().stack.contains("Inter"));
+        assert!(resolve_font_preset("montserrat").unwrap().stack.contains("Montserrat"));
+        assert!(resolve_font_preset("jetbrains-mono").unwrap().stack.contains("JetBrains Mono"));
+        assert!(resolve_font_preset("unknown").is_none());
+    }
+
+    #[test]
+    fn font_presets_case_insensitive() {
+        assert!(resolve_font_preset("Serif").is_some());
+        assert!(resolve_font_preset("MONO").is_some());
+        assert!(resolve_font_preset("System").is_some());
+        assert!(resolve_font_preset("Inter").is_some());
+    }
+
+    #[test]
+    fn google_font_presets_have_imports() {
+        assert!(resolve_font_preset("inter").unwrap().import.is_some());
+        assert!(resolve_font_preset("montserrat").unwrap().import.is_some());
+        assert!(resolve_font_preset("jetbrains-mono").unwrap().import.is_some());
+        // System fonts have no imports
+        assert!(resolve_font_preset("system").unwrap().import.is_none());
+        assert!(resolve_font_preset("serif").unwrap().import.is_none());
+    }
+
+    #[test]
+    fn style_block_sets_heading_font() {
+        let doc = doc_with(vec![
+            Block::Style {
+                properties: vec![StyleProperty { key: "heading-font".into(), value: "serif".into() }],
+                span: span(),
+            },
+            Block::Markdown { content: "# Hello".into(), span: span() },
+        ]);
+        let html = to_html(&doc);
+        assert!(html.contains("--font-heading: Georgia"));
+    }
+
+    #[test]
+    fn style_block_sets_body_font() {
+        let doc = doc_with(vec![
+            Block::Style {
+                properties: vec![StyleProperty { key: "body-font".into(), value: "mono".into() }],
+                span: span(),
+            },
+            Block::Markdown { content: "Hello".into(), span: span() },
+        ]);
+        let html = to_html(&doc);
+        assert!(html.contains("--font-body:"));
+        assert!(html.contains("Menlo"));
+    }
+
+    #[test]
+    fn font_legacy_sets_both() {
+        let doc = doc_with(vec![Block::Site {
+            domain: None,
+            properties: vec![StyleProperty { key: "font".into(), value: "serif".into() }],
+            span: span(),
+        }]);
+        let html = to_html(&doc);
+        assert!(html.contains("--font-heading: Georgia"));
+        assert!(html.contains("--font-body: Georgia"));
+    }
+
+    #[test]
+    fn css_has_font_variables() {
+        assert!(SURFDOC_CSS.contains("--font-heading:"));
+        assert!(SURFDOC_CSS.contains("--font-body:"));
+        assert!(SURFDOC_CSS.contains("font-family: var(--font-body)"));
+        assert!(SURFDOC_CSS.contains("font-family: var(--font-heading)"));
     }
 }

@@ -254,6 +254,15 @@ fn render_block(block: &Block) -> String {
             }
         }
 
+        Block::Nav { items, .. } => {
+            // Degrades to a markdown list of links
+            items
+                .iter()
+                .map(|item| format!("- [{}]({})", item.label, item.href))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
         Block::Unknown {
             name,
             content,
@@ -439,6 +448,7 @@ mod tests {
             label: "Sign Up".into(),
             href: "/signup".into(),
             primary: true,
+            icon: None,
             span: span(),
         }]);
         let md = to_markdown(&doc);

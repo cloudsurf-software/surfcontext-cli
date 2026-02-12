@@ -5,7 +5,7 @@
 
 use crate::types::{
     AttrValue, Attrs, Block, CalloutType, ColumnContent, DataFormat, DecisionStatus, FaqItem,
-    Span, StyleProperty, TabPanel, TaskItem, Trend,
+    NavItem, Span, StyleProperty, TabPanel, TaskItem, Trend,
 };
 
 /// Resolve a `Block::Unknown` into a typed variant, if the name matches a known
@@ -41,6 +41,7 @@ pub fn resolve_block(block: Block) -> Block {
         "pricing-table" => parse_pricing_table(content, *span),
         "site" => parse_site(attrs, content, *span),
         "page" => parse_page(attrs, content, *span),
+        "nav" => parse_nav(attrs, content, *span),
         _ => block,
     }
 }
@@ -460,11 +461,13 @@ fn parse_cta(attrs: &Attrs, span: Span) -> Block {
     let label = attr_string(attrs, "label").unwrap_or_default();
     let href = attr_string(attrs, "href").unwrap_or_default();
     let primary = attr_bool(attrs, "primary");
+    let icon = attr_string(attrs, "icon");
 
     Block::Cta {
         label,
         href,
         primary,
+        icon,
         span,
     }
 }
@@ -686,6 +689,39 @@ fn parse_page_children(content: &str) -> Vec<Block> {
     flush_md_lines(&mut md_lines, &mut children);
 
     children
+}
+
+fn parse_nav(attrs: &Attrs, content: &str, span: Span) -> Block {
+    let logo = attr_string(attrs, "logo");
+    let mut items = Vec::new();
+
+    // Parse markdown-style link lines: `- [Label](href)` or `- [Label](href){icon=name}`
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("- [") {
+            continue;
+        }
+        let rest = &trimmed[3..]; // skip "- ["
+        if let Some(label_end) = rest.find("](") {
+            let label = rest[..label_end].to_string();
+            let after_bracket = &rest[label_end + 2..]; // skip "]("
+            if let Some(href_end) = after_bracket.find(')') {
+                let href = after_bracket[..href_end].to_string();
+                // Check for optional {icon=name} after the link
+                let after_link = &after_bracket[href_end + 1..];
+                let icon = if after_link.trim_start().starts_with("{icon=") {
+                    let icon_start = after_link.find("{icon=").unwrap() + 6;
+                    let icon_part = &after_link[icon_start..];
+                    icon_part.find('}').map(|end| icon_part[..end].to_string())
+                } else {
+                    None
+                };
+                items.push(NavItem { label, href, icon });
+            }
+        }
+    }
+
+    Block::Nav { items, logo, span }
 }
 
 /// Scan forward from `start` looking for a closing directive matching `open_depth`.

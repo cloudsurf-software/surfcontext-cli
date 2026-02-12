@@ -159,7 +159,13 @@ fn handle_render(file: &str, format: RenderFormat) -> Result<()> {
     let output = match format {
         RenderFormat::Terminal => result.doc.to_terminal(),
         RenderFormat::Markdown => result.doc.to_markdown(),
-        RenderFormat::Html => result.doc.to_html(),
+        RenderFormat::Html => {
+            let config = surf_parse::PageConfig {
+                source_path: file.to_string(),
+                ..Default::default()
+            };
+            result.doc.to_html_page(&config)
+        }
     };
 
     println!("{output}");
