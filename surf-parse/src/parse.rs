@@ -362,7 +362,7 @@ fn flush_markdown(
 // ------------------------------------------------------------------
 
 /// If the line is a closing directive (`::`, `:::`, …), return the depth (colon count).
-fn closing_directive_depth(trimmed: &str) -> Option<usize> {
+pub(crate) fn closing_directive_depth(trimmed: &str) -> Option<usize> {
     if trimmed.is_empty() {
         return None;
     }
@@ -375,7 +375,7 @@ fn closing_directive_depth(trimmed: &str) -> Option<usize> {
 }
 
 /// If the line is an opening directive (`::name[attrs]`), return `(depth, name, attrs_str)`.
-fn opening_directive(trimmed: &str) -> Option<(usize, String, String)> {
+pub(crate) fn opening_directive(trimmed: &str) -> Option<(usize, String, String)> {
     if !trimmed.starts_with("::") {
         return None;
     }

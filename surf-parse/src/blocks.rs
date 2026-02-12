@@ -617,28 +617,125 @@ fn parse_page(attrs: &Attrs, content: &str, span: Span) -> Block {
 // Page child block scanner
 // ------------------------------------------------------------------
 
-/// Scan page content for leaf directives (single-line `::name[attrs]`).
+/// Scan page content for both leaf directives and container blocks.
 ///
-/// Lines matching a known block directive are resolved via `resolve_block()`.
-/// Consecutive non-directive lines are collected as `Block::Markdown`.
+/// Container blocks (`::name\ncontent\n::`) are collected and resolved via
+/// `resolve_block()`. Leaf directives (`::name[attrs]` with no matching closer)
+/// are handled as before. Consecutive non-directive lines are collected as
+/// `Block::Markdown`.
 fn parse_page_children(content: &str) -> Vec<Block> {
+    let lines: Vec<&str> = content.lines().collect();
     let mut children = Vec::new();
     let mut md_lines: Vec<&str> = Vec::new();
+    let mut i = 0;
 
-    for line in content.lines() {
-        if let Some(block) = try_parse_leaf_directive(line) {
-            // Flush accumulated markdown
-            flush_md_lines(&mut md_lines, &mut children);
-            children.push(block);
-        } else {
-            md_lines.push(line);
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Check for opening directive
+        if let Some((depth, name, attrs_str)) = crate::parse::opening_directive(trimmed) {
+            // Scan ahead for matching closing directive
+            if let Some((content_str, end_idx)) =
+                scan_container_close(&lines, i + 1, depth)
+            {
+                // Container block — flush markdown, resolve, advance past closer
+                flush_md_lines(&mut md_lines, &mut children);
+
+                let attrs = crate::attrs::parse_attrs(&attrs_str).unwrap_or_default();
+                let dummy_span = Span {
+                    start_line: 0,
+                    end_line: 0,
+                    start_offset: 0,
+                    end_offset: 0,
+                };
+
+                let block = Block::Unknown {
+                    name,
+                    attrs,
+                    content: content_str,
+                    span: dummy_span,
+                };
+                children.push(resolve_block(block));
+
+                i = end_idx + 1; // skip past closing ::
+                continue;
+            } else {
+                // No matching closer — treat as leaf directive
+                if let Some(block) = try_parse_leaf_directive(lines[i]) {
+                    flush_md_lines(&mut md_lines, &mut children);
+                    children.push(block);
+                    i += 1;
+                    continue;
+                }
+                // Not a valid leaf either — fall through to markdown
+            }
         }
+
+        // Skip bare closing markers that aren't matched to anything
+        if crate::parse::closing_directive_depth(trimmed).is_some() {
+            // Orphan closer — don't leak into markdown
+            i += 1;
+            continue;
+        }
+
+        md_lines.push(lines[i]);
+        i += 1;
     }
 
     // Flush remaining markdown
     flush_md_lines(&mut md_lines, &mut children);
 
     children
+}
+
+/// Scan forward from `start` looking for a closing directive matching `open_depth`.
+///
+/// Tracks nesting so that `:::column` / `:::` inside a `::columns` block are
+/// skipped correctly. If a sibling opening directive at the same depth is
+/// encountered (e.g. `::callout` while scanning for `::hero-image`'s closer),
+/// we bail out — the original block has no closer and should be treated as a leaf.
+///
+/// Returns `(collected_content, closing_line_index)`.
+fn scan_container_close(lines: &[&str], start: usize, open_depth: usize) -> Option<(String, usize)> {
+    let mut nesting = 0usize;
+    let mut content_lines: Vec<&str> = Vec::new();
+
+    for i in start..lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Check for a closing directive
+        if let Some(close_depth) = crate::parse::closing_directive_depth(trimmed) {
+            if close_depth == open_depth && nesting == 0 {
+                // This closes our container
+                return Some((content_lines.join("\n"), i));
+            }
+            // Might close a nested block
+            if nesting > 0 {
+                nesting -= 1;
+                content_lines.push(lines[i]);
+                continue;
+            }
+            // Unmatched closer at wrong depth — include as content
+            content_lines.push(lines[i]);
+            continue;
+        }
+
+        // Check for opening directives
+        if let Some((nested_depth, _, _)) = crate::parse::opening_directive(trimmed) {
+            if nested_depth == open_depth && nesting == 0 {
+                // Sibling block at same depth — our block has no closer
+                return None;
+            }
+            if nested_depth > open_depth {
+                nesting += 1;
+            }
+        }
+
+        content_lines.push(lines[i]);
+    }
+
+    // No matching closer found
+    None
 }
 
 /// Try to parse a single line as a leaf directive (`::name[attrs]`).
@@ -1672,6 +1769,237 @@ mod tests {
                 assert_eq!(name, "custom_block");
             }
             other => panic!("Expected Unknown passthrough, got {other:?}"),
+        }
+    }
+
+    // -- Container blocks inside Page ---------------------------------
+
+    #[test]
+    fn page_container_pricing_table() {
+        let content = "# Menu\n\n::pricing-table\n| Item | Price |\n|------|-------|\n| Coffee | $4 |\n| Muffin | $3 |\n::\n\nVisit us today!";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 3, "children: {children:#?}");
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+                match &children[1] {
+                    Block::PricingTable { headers, rows, .. } => {
+                        assert_eq!(headers, &["Item", "Price"]);
+                        assert_eq!(rows.len(), 2);
+                        assert_eq!(rows[0], vec!["Coffee", "$4"]);
+                        assert_eq!(rows[1], vec!["Muffin", "$3"]);
+                    }
+                    other => panic!("Expected PricingTable, got {other:?}"),
+                }
+                assert!(matches!(&children[2], Block::Markdown { .. }));
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_container_callout() {
+        let content = "::callout[type=warning]\nWatch out for hot drinks!\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 1, "children: {children:#?}");
+                match &children[0] {
+                    Block::Callout { callout_type, content, .. } => {
+                        assert_eq!(*callout_type, CalloutType::Warning);
+                        assert_eq!(content, "Watch out for hot drinks!");
+                    }
+                    other => panic!("Expected Callout, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_container_faq() {
+        let content = "::faq\n### What are your hours?\nMon-Fri 7am-6pm.\n### Do you deliver?\nYes, within 5 miles.\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 1, "children: {children:#?}");
+                match &children[0] {
+                    Block::Faq { items, .. } => {
+                        assert_eq!(items.len(), 2);
+                        assert_eq!(items[0].question, "What are your hours?");
+                        assert!(items[0].answer.contains("7am-6pm"));
+                        assert_eq!(items[1].question, "Do you deliver?");
+                    }
+                    other => panic!("Expected Faq, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_container_data() {
+        let content = "::data\n| Name | Value |\n|------|-------|\n| Alpha | 100 |\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 1, "children: {children:#?}");
+                match &children[0] {
+                    Block::Data { headers, rows, .. } => {
+                        assert_eq!(headers, &["Name", "Value"]);
+                        assert_eq!(rows.len(), 1);
+                        assert_eq!(rows[0], vec!["Alpha", "100"]);
+                    }
+                    other => panic!("Expected Data, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_container_testimonial() {
+        let content = "::testimonial[author=\"Jane\" role=\"Regular\"]\nBest bakery in town!\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 1, "children: {children:#?}");
+                match &children[0] {
+                    Block::Testimonial { content, author, role, .. } => {
+                        assert_eq!(content, "Best bakery in town!");
+                        assert_eq!(author.as_deref(), Some("Jane"));
+                        assert_eq!(role.as_deref(), Some("Regular"));
+                    }
+                    other => panic!("Expected Testimonial, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_container_columns_with_nesting() {
+        let content = "::columns\n:::column\nLeft side.\n:::\n:::column\nRight side.\n:::\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                assert_eq!(children.len(), 1, "children: {children:#?}");
+                match &children[0] {
+                    Block::Columns { columns, .. } => {
+                        assert_eq!(columns.len(), 2);
+                        assert_eq!(columns[0].content, "Left side.");
+                        assert_eq!(columns[1].content, "Right side.");
+                    }
+                    other => panic!("Expected Columns, got {other:?}"),
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_mixed_leaf_and_container_preserves_order() {
+        let content = "# Welcome\n\n::hero-image[src=\"hero.png\"]\n\n::callout[type=tip]\nPro tip: order early!\n::\n\n::cta[label=\"Order Now\" href=\"/order\" primary]\n\n::faq\n### How to order?\nOnline or in store.\n::";
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                // Markdown, HeroImage, Callout, Cta, Faq
+                assert_eq!(children.len(), 5, "children: {children:#?}");
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+                assert!(matches!(&children[1], Block::HeroImage { .. }));
+                assert!(matches!(&children[2], Block::Callout { .. }));
+                assert!(matches!(&children[3], Block::Cta { .. }));
+                assert!(matches!(&children[4], Block::Faq { .. }));
+            }
+            other => panic!("Expected Page, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_bakery_example_no_leaked_markers() {
+        // Simulate a typical AI-generated bakery site
+        let content = r#"# Fresh Baked Daily
+
+Welcome to Sunrise Bakery! We bake fresh bread, pastries, and cakes every morning.
+
+::hero-image[src="/images/bakery.jpg" alt="Fresh bread"]
+
+::pricing-table
+| Item | Price |
+|------|-------|
+| Sourdough Loaf | $6 |
+| Croissant | $3.50 |
+| Birthday Cake | $35 |
+::
+
+::testimonial[author="Sarah M." role="Regular Customer"]
+The best sourdough in the city. I come here every weekend!
+::
+
+::faq
+### Do you take custom orders?
+Yes! Place custom cake orders at least 48 hours in advance.
+### Are you open on weekends?
+Saturday 7am-4pm, Sunday 8am-2pm.
+::
+
+::cta[label="Order Online" href="/order" primary]"#;
+
+        let block = unknown(
+            "page",
+            attrs(&[("route", AttrValue::String("/".into()))]),
+            content,
+        );
+        match resolve_block(block) {
+            Block::Page { children, .. } => {
+                // Markdown, HeroImage, PricingTable, Testimonial, Faq, Cta
+                assert_eq!(children.len(), 6, "children: {children:#?}");
+                assert!(matches!(&children[0], Block::Markdown { .. }));
+                assert!(matches!(&children[1], Block::HeroImage { .. }));
+                assert!(matches!(&children[2], Block::PricingTable { .. }));
+                assert!(matches!(&children[3], Block::Testimonial { .. }));
+                assert!(matches!(&children[4], Block::Faq { .. }));
+                assert!(matches!(&children[5], Block::Cta { .. }));
+
+                // Verify no :: leaked into any markdown block
+                for child in &children {
+                    if let Block::Markdown { content, .. } = child {
+                        assert!(
+                            !content.contains("\n::") && !content.starts_with("::"),
+                            "Leaked :: markers in markdown: {content}"
+                        );
+                    }
+                }
+            }
+            other => panic!("Expected Page, got {other:?}"),
         }
     }
 }
