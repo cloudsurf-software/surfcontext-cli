@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "surf-parse", "surf-parse-wasm"]
+members = [".", "surf-parse-wasm"]
 resolver = "3"
 
 [package]
@@ -22,5 +22,5 @@ anyhow = "1"
 sha2 = "0.10"
 walkdir = "2"
 colored = "3"
-surf-parse = { path = "surf-parse" }
+surf-parse = { git = "https://github.com/cloudsurf-software/surf-parse", branch = "main" }
 notify = "7"

@@ -9,7 +9,7 @@ description = "WASM bindings for surf-parse — run the SurfDoc parser in any br
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-surf-parse = { path = "../surf-parse", default-features = false }
+surf-parse = { git = "https://github.com/cloudsurf-software/surf-parse", branch = "main", default-features = false }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
 serde_json = "1"
