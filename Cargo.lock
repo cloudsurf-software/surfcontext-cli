@@ -143,7 +143,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -537,10 +537,22 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "surf-parse"
-version = "0.2.0"
-source = "git+https://github.com/cloudsurf-software/surf-parse?branch=main#b352c5dd03fe6ce46859d72e7ef594743684cf7d"
+version = "0.3.0"
+source = "git+https://github.com/cloudsurf-software/surf-parse?tag=v0.3.0#a6752fb8a6cbe3e38d1514009b70399deee248b2"
 dependencies = [
  "colored",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+]
+
+[[package]]
+name = "surf-parse"
+version = "0.3.0"
+source = "git+https://github.com/cloudsurf-software/surf-parse?branch=main#a6752fb8a6cbe3e38d1514009b70399deee248b2"
+dependencies = [
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -554,7 +566,7 @@ version = "0.1.0"
 dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
- "surf-parse",
+ "surf-parse 0.3.0 (git+https://github.com/cloudsurf-software/surf-parse?branch=main)",
  "wasm-bindgen",
 ]
 
@@ -569,7 +581,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "surf-parse",
+ "surf-parse 0.3.0 (git+https://github.com/cloudsurf-software/surf-parse?tag=v0.3.0)",
  "walkdir",
 ]
 
@@ -707,7 +719,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -44,19 +44,10 @@ pub fn handle_build(file: &str, out_dir: &str, title: Option<&str>, quiet: bool)
         // Multi-page site build
         let site = site_config.unwrap();
 
-        // Build nav items from page list
+        // Build nav items — surf-parse handles label capitalization via display_title()
         let nav_items: Vec<(String, String)> = pages
             .iter()
-            .map(|p| {
-                let display = p.title.clone().unwrap_or_else(|| {
-                    if p.route == "/" {
-                        "Home".to_string()
-                    } else {
-                        capitalize_route(&p.route)
-                    }
-                });
-                (p.route.clone(), display)
-            })
+            .map(|p| (p.route.clone(), p.display_title()))
             .collect();
 
         // Create output directory
@@ -195,22 +186,6 @@ pub fn handle_build(file: &str, out_dir: &str, title: Option<&str>, quiet: bool)
     Ok(())
 }
 
-/// Capitalize a route path for use as a nav label.
-/// "/about" → "About", "/contact-us" → "Contact Us"
-fn capitalize_route(route: &str) -> String {
-    route
-        .trim_start_matches('/')
-        .split('-')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
 
 /// Watch the source file for changes and rebuild on each save.
 ///

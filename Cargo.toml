@@ -22,5 +22,5 @@ anyhow = "1"
 sha2 = "0.10"
 walkdir = "2"
 colored = "3"
-surf-parse = { git = "https://github.com/cloudsurf-software/surf-parse", branch = "main" }
+surf-parse = { git = "https://github.com/cloudsurf-software/surf-parse", tag = "v0.3.0" }
 notify = "7"
